@@ -16,8 +16,11 @@ import { AuthScreen } from './components/AuthScreen';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { GlobalBarcodeListener } from './components/GlobalBarcodeListener';
 import { InventoryDashboard } from './components/InventoryDashboard';
 import { ProductDrawer } from './components/ProductDrawer';
+import { ReceiptPreviewModal } from './components/ReceiptPreviewModal';
+import { ReceiptSettingsModal } from './components/ReceiptSettingsModal';
 import { SaleModal } from './components/SaleModal';
 import {
   auth,
@@ -27,21 +30,38 @@ import {
   OperationType,
   OWNER_EMAIL,
 } from './firebase';
-import type {
-  AuthorizedUser,
-  BarcodeScanResult,
-  CategoryItem,
-  Product,
-  SaleRecord,
+import {
+  DEFAULT_RECEIPT_SETTINGS,
+  type AuthorizedUser,
+  type BarcodeScanResult,
+  type CategoryItem,
+  type CheckoutCartItem,
+  type PaymentMethod,
+  type Product,
+  type ReceiptData,
+  type ReceiptLineItem,
+  type ReceiptSettings,
+  type SaleRecord,
 } from './types/inventory';
 import type { ValidatedProductPayload } from './utils/barcodeDecoder';
+import { useAppTheme } from './utils/theme';
 
 function makeSafeDocId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now()}_${rand}`;
 }
 
+function makeReceiptNumber(): string {
+  const d = new Date();
+  const yy = String(d.getFullYear()).slice(-2);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `CHK-${yy}${mm}${dd}-${rand}`;
+}
+
 function MainApp() {
+  const { theme, toggleTheme } = useAppTheme();
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [accessChecked, setAccessChecked] = useState<boolean>(false);
@@ -53,6 +73,9 @@ function MainApp() {
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<AuthorizedUser[]>([]);
+  const [receiptSettings, setReceiptSettings] = useState<ReceiptSettings>(
+    DEFAULT_RECEIPT_SETTINGS
+  );
   const [dataLoading, setDataLoading] = useState<boolean>(true);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
@@ -68,8 +91,18 @@ function MainApp() {
   const [scannerTab, setScannerTab] = useState<'camera' | 'gallery'>('camera');
   const [scannerTarget, setScannerTarget] = useState<'lookup' | 'field'>('lookup');
 
-  // Sale modal state
+  // Sale & Receipt modals state
   const [saleOpen, setSaleOpen] = useState<boolean>(false);
+  const [receiptSettingsOpen, setReceiptSettingsOpen] = useState<boolean>(false);
+  const [reprintReceipt, setReprintReceipt] = useState<ReceiptData | null>(null);
+  const [externalSaleScan, setExternalSaleScan] = useState<{
+    seq: number;
+    scan: BarcodeScanResult;
+  } | null>(null);
+  const [externalDashboardSearch, setExternalDashboardSearch] = useState<{
+    seq: number;
+    code: string;
+  } | null>(null);
 
   // Delete confirmation modal state
   const [deleteTargetProduct, setDeleteTargetProduct] = useState<Product | null>(null);
@@ -218,6 +251,14 @@ function MainApp() {
             unitPrice: typeof data.unitPrice === 'number' ? data.unitPrice : 0,
             totalAmount: typeof data.totalAmount === 'number' ? data.totalAmount : 0,
             ownerId: String(data.ownerId || ''),
+            receiptNumber:
+              typeof data.receiptNumber === 'string' ? data.receiptNumber : undefined,
+            paymentMethod:
+              data.paymentMethod === 'card' || data.paymentMethod === 'cash'
+                ? data.paymentMethod
+                : undefined,
+            cashierEmail:
+              typeof data.cashierEmail === 'string' ? data.cashierEmail : undefined,
             soldAt: data.soldAt || null,
           };
         });
@@ -225,6 +266,36 @@ function MainApp() {
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, salesPath);
+      }
+    );
+
+    const receiptSettingsPath = 'store_settings/receipt';
+    const unsubReceiptSettings = onSnapshot(
+      doc(db, 'store_settings', 'receipt'),
+      (snap) => {
+        if (!snap.exists()) {
+          setReceiptSettings(DEFAULT_RECEIPT_SETTINGS);
+          return;
+        }
+        const data = snap.data();
+        setReceiptSettings({
+          storeName:
+            typeof data.storeName === 'string' && data.storeName.trim()
+              ? data.storeName
+              : DEFAULT_RECEIPT_SETTINGS.storeName,
+          subtitle: typeof data.subtitle === 'string' ? data.subtitle : '',
+          address: typeof data.address === 'string' ? data.address : '',
+          phone: typeof data.phone === 'string' ? data.phone : '',
+          taxId: typeof data.taxId === 'string' ? data.taxId : '',
+          footerNote:
+            typeof data.footerNote === 'string'
+              ? data.footerNote
+              : DEFAULT_RECEIPT_SETTINGS.footerNote,
+          paperWidth: data.paperWidth === '58mm' ? '58mm' : '80mm',
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, receiptSettingsPath);
       }
     );
 
@@ -256,6 +327,7 @@ function MainApp() {
       unsubProducts();
       unsubCategories();
       unsubSales();
+      unsubReceiptSettings();
       if (unsubAuthUsers) unsubAuthUsers();
     };
   }, [authReady, accessChecked, isAuthorizedStoreUser, isAdmin, user]);
@@ -366,61 +438,131 @@ function MainApp() {
     [showNotice]
   );
 
-  const handleConfirmSale = useCallback(
-    async (productId: string, sellQty: number): Promise<{ remainingQty: number }> => {
+  const handleConfirmCheckout = useCallback(
+    async (
+      items: CheckoutCartItem[],
+      options: { paymentMethod: PaymentMethod; cashReceived?: number }
+    ): Promise<ReceiptData> => {
       if (!user) {
         throw new Error('İstifadəçi sessiyası tapılmadı.');
       }
-      const docPath = `products/${productId}`;
-      const productRef = doc(db, 'products', productId);
-      const saleId = makeSafeDocId('sale');
-      const saleRef = doc(db, 'sales', saleId);
+      if (items.length === 0) {
+        throw new Error('Satış səbəti boşdur.');
+      }
+
+      const receiptNumber = makeReceiptNumber();
+      const cashierEmail = (user.email || '').slice(0, 160);
+      const cashierLabel = cashierEmail.split('@')[0] || 'Kassir';
+      const pathHint = `checkout:${receiptNumber}`;
 
       try {
-        let soldProductName = '';
-        let soldUnit = 'ədəd';
-        const remainingQty = await runTransaction(db, async (transaction) => {
-          const snap = await transaction.get(productRef);
-          if (!snap.exists()) {
-            throw new Error('Məhsul bazada tapılmadı.');
+        const lineItems = await runTransaction(db, async (transaction) => {
+          // 1. Read all product snapshots first before any writes
+          const snapshots = await Promise.all(
+            items.map(async (cartItem) => {
+              const productRef = doc(db, 'products', cartItem.product.id);
+              const snap = await transaction.get(productRef);
+              return { cartItem, productRef, snap };
+            })
+          );
+
+          const prepared: Array<{
+            productRef: ReturnType<typeof doc>;
+            nextQty: number;
+            saleId: string;
+            salePayload: Record<string, unknown>;
+            receiptLine: ReceiptLineItem;
+          }> = [];
+
+          for (const { cartItem, productRef, snap } of snapshots) {
+            if (!snap.exists()) {
+              throw new Error(`"${cartItem.product.name}" bazada tapılmadı.`);
+            }
+            const data = snap.data();
+            const productName = String(data.name || '');
+            const unit = String(data.unit || 'ədəd');
+            const unitPrice = Number(data.salePrice ?? 0);
+            const currentQty = Number(data.quantity ?? 0);
+            const sellQty = Math.round(cartItem.quantity * 100) / 100;
+
+            if (sellQty <= 0 || sellQty > currentQty) {
+              throw new Error(
+                `"${productName}" üçün anbarda kifayət qədər stok yoxdur. Mövcud stok: ${currentQty} ${unit}`
+              );
+            }
+
+            const nextQty = Math.max(0, Math.round((currentQty - sellQty) * 100) / 100);
+            const lineTotal = Math.round(sellQty * unitPrice * 100) / 100;
+            const saleId = makeSafeDocId('sale');
+
+            const salePayload: Record<string, unknown> = {
+              productId: cartItem.product.id,
+              productName: productName.slice(0, 160),
+              barcode: String(data.barcode || '').slice(0, 64),
+              category: String(data.category || 'Digər').slice(0, 64),
+              quantity: sellQty,
+              unit: unit.slice(0, 24),
+              unitPrice,
+              totalAmount: lineTotal,
+              ownerId: user.uid,
+              receiptNumber,
+              paymentMethod: options.paymentMethod,
+              soldAt: serverTimestamp(),
+            };
+            if (cashierEmail) {
+              salePayload.cashierEmail = cashierEmail;
+            }
+
+            prepared.push({
+              productRef,
+              nextQty,
+              saleId,
+              salePayload,
+              receiptLine: {
+                productId: cartItem.product.id,
+                productName,
+                barcode: String(data.barcode || ''),
+                quantity: sellQty,
+                unit,
+                unitPrice,
+                lineTotal,
+              },
+            });
           }
-          const data = snap.data();
-          soldProductName = String(data.name || '');
-          soldUnit = String(data.unit || 'ədəd');
-          const unitPrice = Number(data.salePrice ?? 0);
-          const currentQty = Number(data.quantity ?? 0);
-          if (sellQty <= 0 || sellQty > currentQty) {
-            throw new Error(
-              `Anbarda kifayət qədər stok yoxdur. Mövcud stok: ${currentQty} ${soldUnit}`
-            );
+
+          // 2. Apply all stock deductions and sale records atomically
+          for (const entry of prepared) {
+            transaction.update(entry.productRef, {
+              quantity: entry.nextQty,
+              updatedAt: serverTimestamp(),
+            });
+            transaction.set(doc(db, 'sales', entry.saleId), entry.salePayload);
           }
-          const nextQty = Math.max(0, Math.round((currentQty - sellQty) * 100) / 100);
-          const totalAmount = Math.round(sellQty * unitPrice * 100) / 100;
 
-          transaction.update(productRef, {
-            quantity: nextQty,
-            updatedAt: serverTimestamp(),
-          });
-
-          transaction.set(saleRef, {
-            productId,
-            productName: soldProductName.slice(0, 160),
-            barcode: String(data.barcode || '').slice(0, 64),
-            category: String(data.category || 'Digər').slice(0, 64),
-            quantity: Math.round(sellQty * 100) / 100,
-            unit: soldUnit.slice(0, 24),
-            unitPrice,
-            totalAmount,
-            ownerId: user.uid,
-            soldAt: serverTimestamp(),
-          });
-
-          return nextQty;
+          return prepared.map((p) => p.receiptLine);
         });
+
+        const totalAmount =
+          Math.round(lineItems.reduce((sum, l) => sum + l.lineTotal, 0) * 100) / 100;
+        const changeAmount =
+          typeof options.cashReceived === 'number' && options.cashReceived >= totalAmount
+            ? Math.round((options.cashReceived - totalAmount) * 100) / 100
+            : undefined;
+
         showNotice(
-          `Satış: ${soldProductName} (-${sellQty} ${soldUnit}) · Qalan: ${remainingQty} ${soldUnit}`
+          `Satış tamamlandı (${receiptNumber}) · ${lineItems.length} çeşid · ${totalAmount.toFixed(2)} ₼`
         );
-        return { remainingQty };
+
+        return {
+          receiptNumber,
+          issuedAt: new Date(),
+          cashierLabel,
+          paymentMethod: options.paymentMethod,
+          items: lineItems,
+          totalAmount,
+          cashReceived: options.cashReceived,
+          changeAmount,
+        };
       } catch (error) {
         if (
           error instanceof Error &&
@@ -429,10 +571,69 @@ function MainApp() {
         ) {
           throw error;
         }
-        handleFirestoreError(error, OperationType.WRITE, `${docPath} -> sales/${saleId}`);
+        handleFirestoreError(error, OperationType.WRITE, pathHint);
       }
     },
     [user, showNotice]
+  );
+
+  const handleSaveReceiptSettings = useCallback(
+    async (next: ReceiptSettings) => {
+      if (!user) return;
+      const docPath = 'store_settings/receipt';
+      try {
+        await setDoc(doc(db, 'store_settings', 'receipt'), {
+          storeName: next.storeName,
+          subtitle: next.subtitle,
+          address: next.address,
+          phone: next.phone,
+          taxId: next.taxId,
+          footerNote: next.footerNote,
+          paperWidth: next.paperWidth,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        });
+        showNotice('Çek və printer ayarları yadda saxlanıldı');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, docPath);
+      }
+    },
+    [user, showNotice]
+  );
+
+  const handleReprintSale = useCallback(
+    (targetSale: SaleRecord) => {
+      const grouped = targetSale.receiptNumber
+        ? sales.filter((s) => s.receiptNumber === targetSale.receiptNumber)
+        : [targetSale];
+      const source = grouped.length > 0 ? grouped : [targetSale];
+      const items: ReceiptLineItem[] = source.map((s) => ({
+        productId: s.productId,
+        productName: s.productName,
+        barcode: s.barcode,
+        quantity: s.quantity,
+        unit: s.unit,
+        unitPrice: s.unitPrice,
+        lineTotal: s.totalAmount,
+      }));
+      const totalAmount =
+        Math.round(items.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
+      const issuedAt =
+        targetSale.soldAt && typeof targetSale.soldAt.toDate === 'function'
+          ? targetSale.soldAt.toDate()
+          : new Date();
+      const cashierEmail = targetSale.cashierEmail || user?.email || '';
+      setReprintReceipt({
+        receiptNumber:
+          targetSale.receiptNumber || `CHK-${targetSale.id.slice(-6).toUpperCase()}`,
+        issuedAt,
+        cashierLabel: cashierEmail.split('@')[0] || 'Kassir',
+        paymentMethod: targetSale.paymentMethod || 'cash',
+        items,
+        totalAmount,
+      });
+    },
+    [sales, user]
   );
 
   const handleAddCategory = useCallback(
@@ -531,35 +732,89 @@ function MainApp() {
     }
   };
 
-  const handleBarcodeDetected = (result: BarcodeScanResult) => {
-    setScannerOpen(false);
-    if (scannerTarget === 'field') {
-      setScannedOverride(result);
-      return;
-    }
+  const handleBarcodeDetected = useCallback(
+    (result: BarcodeScanResult) => {
+      setScannerOpen(false);
+      if (scannerTarget === 'field') {
+        setScannedOverride(result);
+        return;
+      }
 
-    // Lookup mode: find existing product by barcode, or open create drawer pre-filled
-    const match = products.find(
-      (p) => p.barcode.trim().toLowerCase() === result.code.trim().toLowerCase()
-    );
-    if (match) {
-      setEditingProduct(match);
-      setDrawerMode('edit');
-      setInitialBarcode(null);
-      setDrawerOpen(true);
-      showNotice(`Barkod tapıldı: ${match.name}`);
-    } else {
-      setEditingProduct(null);
-      setDrawerMode('create');
-      setInitialBarcode(result);
-      setDrawerOpen(true);
-    }
-  };
+      // Lookup mode: find existing product by barcode, or open create drawer pre-filled
+      const match = products.find(
+        (p) => p.barcode.trim().toLowerCase() === result.code.trim().toLowerCase()
+      );
+      if (match) {
+        setEditingProduct(match);
+        setDrawerMode('edit');
+        setInitialBarcode(null);
+        setDrawerOpen(true);
+        showNotice(`Barkod tapıldı: ${match.name}`);
+      } else {
+        setEditingProduct(null);
+        setDrawerMode('create');
+        setInitialBarcode(result);
+        setDrawerOpen(true);
+      }
+    },
+    [scannerTarget, products, showNotice]
+  );
+
+  const handleGlobalBarcodeScan = useCallback(
+    (result: BarcodeScanResult) => {
+      if (scannerOpen) {
+        handleBarcodeDetected(result);
+        return;
+      }
+
+      if (saleOpen) {
+        setExternalSaleScan((prev) => ({
+          seq: (prev?.seq ?? 0) + 1,
+          scan: result,
+        }));
+        return;
+      }
+
+      if (drawerOpen) {
+        setScannedOverride(result);
+        return;
+      }
+
+      const anyBlockingModalOpen = Boolean(
+        receiptSettingsOpen ||
+          reprintReceipt ||
+          deleteTargetProduct ||
+          deleteTargetCategory ||
+          deleteTargetSale ||
+          deleteTargetAuthUser
+      );
+      if (!anyBlockingModalOpen) {
+        setExternalDashboardSearch((prev) => ({
+          seq: (prev?.seq ?? 0) + 1,
+          code: result.code,
+        }));
+      }
+    },
+    [
+      scannerOpen,
+      saleOpen,
+      drawerOpen,
+      receiptSettingsOpen,
+      reprintReceipt,
+      deleteTargetProduct,
+      deleteTargetCategory,
+      deleteTargetSale,
+      deleteTargetAuthUser,
+      handleBarcodeDetected,
+    ]
+  );
 
   if (!authReady || !accessChecked) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="text-sm text-slate-600">Sistem yüklənir...</div>
+      <div className="min-h-screen bg-[#E6ECF2] dark:bg-[#0B1120] flex items-center justify-center p-6">
+        <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
+          Sistem yüklənir...
+        </div>
       </div>
     );
   }
@@ -572,6 +827,8 @@ function MainApp() {
         }
         authError={authError}
         busy={authBusy}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
       />
@@ -580,15 +837,23 @@ function MainApp() {
 
   return (
     <>
+      <GlobalBarcodeListener
+        enabled={isAuthorizedStoreUser}
+        onScan={handleGlobalBarcodeScan}
+      />
+
       <InventoryDashboard
         userEmail={user.email || OWNER_EMAIL}
         isAdmin={isAdmin}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         products={products}
         customCategories={categories}
         sales={sales}
         authorizedUsers={authorizedUsers}
         loading={dataLoading}
         syncNotice={syncNotice}
+        externalSearch={externalDashboardSearch}
         onSignOut={handleSignOut}
         onOpenNewProduct={() => {
           setEditingProduct(null);
@@ -612,6 +877,8 @@ function MainApp() {
         onRequestDeleteProduct={(product) => setDeleteTargetProduct(product)}
         onAddCategory={handleAddCategory}
         onDeleteCategory={(cat) => setDeleteTargetCategory(cat)}
+        onOpenReceiptSettings={() => setReceiptSettingsOpen(true)}
+        onReprintSale={handleReprintSale}
         onRequestDeleteSale={(sale) => setDeleteTargetSale(sale)}
         onAddAuthorizedUser={handleAddAuthorizedUser}
         onRequestDeleteAuthorizedUser={(authUser) => setDeleteTargetAuthUser(authUser)}
@@ -667,14 +934,32 @@ function MainApp() {
       <SaleModal
         isOpen={saleOpen}
         products={products}
+        receiptSettings={receiptSettings}
+        externalScan={externalSaleScan}
         onClose={() => setSaleOpen(false)}
-        onConfirmSale={handleConfirmSale}
+        onConfirmCheckout={handleConfirmCheckout}
         onCreateMissingProduct={(scan) => {
           setEditingProduct(null);
           setDrawerMode('create');
           setInitialBarcode(scan);
           setDrawerOpen(true);
         }}
+        onOpenReceiptSettings={() => setReceiptSettingsOpen(true)}
+      />
+
+      <ReceiptPreviewModal
+        isOpen={Boolean(reprintReceipt)}
+        receipt={reprintReceipt}
+        settings={receiptSettings}
+        onClose={() => setReprintReceipt(null)}
+        onOpenSettings={() => setReceiptSettingsOpen(true)}
+      />
+
+      <ReceiptSettingsModal
+        isOpen={receiptSettingsOpen}
+        settings={receiptSettings}
+        onClose={() => setReceiptSettingsOpen(false)}
+        onSave={handleSaveReceiptSettings}
       />
 
       <DeleteConfirmModal

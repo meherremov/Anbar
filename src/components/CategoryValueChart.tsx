@@ -18,14 +18,14 @@ interface CategorySlice {
 }
 
 const CHART_PALETTE = [
-  { color: '#1D4ED8', swatchClass: 'bg-blue-700' },
-  { color: '#0F766E', swatchClass: 'bg-teal-700' },
-  { color: '#D97706', swatchClass: 'bg-amber-600' },
-  { color: '#4338CA', swatchClass: 'bg-indigo-700' },
-  { color: '#15803D', swatchClass: 'bg-green-700' },
-  { color: '#B45309', swatchClass: 'bg-amber-700' },
-  { color: '#475569', swatchClass: 'bg-slate-600' },
-  { color: '#B91C1C', swatchClass: 'bg-red-700' },
+  { color: '#3B82F6', swatchClass: 'bg-blue-500' },
+  { color: '#14B8A6', swatchClass: 'bg-teal-500' },
+  { color: '#F59E0B', swatchClass: 'bg-amber-500' },
+  { color: '#6366F1', swatchClass: 'bg-indigo-500' },
+  { color: '#10B981', swatchClass: 'bg-emerald-500' },
+  { color: '#0EA5E9', swatchClass: 'bg-sky-500' },
+  { color: '#64748B', swatchClass: 'bg-slate-500' },
+  { color: '#EF4444', swatchClass: 'bg-red-500' },
 ] as const;
 
 function formatPrice(val: number): string {
@@ -134,16 +134,16 @@ export function CategoryValueChart({
 
   if (loading) {
     return (
-      <section className="bg-white border border-slate-200 rounded-xl p-5">
+      <section className="bg-white dark:bg-[#131C31] border border-slate-200/90 dark:border-slate-800 rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <div className="h-4 w-56 bg-slate-200 rounded animate-pulse" />
-          <div className="h-4 w-24 bg-slate-100 rounded animate-pulse" />
+          <div className="h-4 w-56 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
+          <div className="h-4 w-24 bg-slate-100 dark:bg-slate-800/70 rounded animate-pulse" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6 items-center">
-          <div className="w-44 h-44 mx-auto rounded-full bg-slate-100 animate-pulse" />
+          <div className="w-44 h-44 mx-auto rounded-full bg-slate-100 dark:bg-slate-800/80 animate-pulse" />
           <div className="space-y-3">
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-5 bg-slate-100 rounded animate-pulse" />
+              <div key={i} className="h-5 bg-slate-100 dark:bg-slate-800/70 rounded animate-pulse" />
             ))}
           </div>
         </div>
@@ -154,14 +154,14 @@ export function CategoryValueChart({
   return (
     <section
       aria-label="Kateqoriyalar üzrə anbar dəyəri"
-      className="bg-white border border-slate-200 rounded-xl p-5"
+      className="bg-white dark:bg-[#131C31] border border-slate-200/90 dark:border-slate-800 rounded-xl p-5"
     >
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100 dark:border-slate-800">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             Kateqoriyalar üzrə anbar dəyəri
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Hər kateqoriyadakı məhsulların cəmi satış dəyəri (filtr üçün kateqoriyaya klikləyin)
           </p>
         </div>
@@ -169,7 +169,7 @@ export function CategoryValueChart({
           <button
             type="button"
             onClick={() => onSelectCategory('all')}
-            className="self-start sm:self-auto text-xs font-medium text-blue-700 hover:text-blue-800 whitespace-nowrap cursor-pointer"
+            className="self-start sm:self-auto text-xs font-medium text-blue-700 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 whitespace-nowrap cursor-pointer"
           >
             Bütün kateqoriyaları göstər
           </button>
@@ -177,7 +177,7 @@ export function CategoryValueChart({
       </div>
 
       {slices.length === 0 ? (
-        <div className="py-8 text-center text-sm text-slate-500">
+        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
           Diaqramın görünməsi üçün qiyməti və stoku 0-dan böyük məhsul əlavə edin.
         </div>
       ) : (
@@ -262,14 +262,14 @@ export function CategoryValueChart({
 
             {/* Center Readout */}
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center px-6">
-              <span className="text-[11px] text-slate-500 max-w-[96px] truncate">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 max-w-[96px] truncate">
                 {activeSlice ? activeSlice.category : 'Ümumi dəyər'}
               </span>
-              <span className="text-sm font-bold text-slate-900 font-mono tabular-nums mt-0.5">
+              <span className="text-sm font-bold text-slate-900 dark:text-white font-mono tabular-nums mt-0.5">
                 {formatPrice(activeSlice ? activeSlice.value : totalValue)}
               </span>
               {activeSlice ? (
-                <span className="text-[11px] font-mono tabular-nums text-blue-700 mt-0.5">
+                <span className="text-[11px] font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-0.5">
                   {activeSlice.percentage.toFixed(1)}%
                 </span>
               ) : null}
@@ -277,7 +277,7 @@ export function CategoryValueChart({
           </div>
 
           {/* Tabular Category Breakdown Legend */}
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
             {slices.map((slice) => {
               const isSelected = selectedCategory === slice.category;
               const isHovered = hoveredCategory === slice.category;
@@ -292,10 +292,10 @@ export function CategoryValueChart({
                   }
                   className={`w-full py-2.5 px-2 -mx-2 rounded-lg flex items-center justify-between gap-4 text-left transition-colors cursor-pointer ${
                     isSelected
-                      ? 'bg-blue-50/80'
+                      ? 'bg-blue-50/80 dark:bg-blue-950/60'
                       : isHovered
-                      ? 'bg-slate-50'
-                      : 'hover:bg-slate-50'
+                      ? 'bg-slate-50 dark:bg-slate-800/60'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -306,22 +306,22 @@ export function CategoryValueChart({
                     <span
                       className={`text-sm truncate ${
                         isSelected
-                          ? 'font-semibold text-blue-900'
-                          : 'font-medium text-slate-800'
+                          ? 'font-semibold text-blue-900 dark:text-blue-200'
+                          : 'font-medium text-slate-800 dark:text-slate-200'
                       }`}
                     >
                       {slice.category}
                     </span>
-                    <span className="text-xs text-slate-400 font-mono tabular-nums shrink-0">
+                    <span className="text-xs text-slate-400 dark:text-slate-500 font-mono tabular-nums shrink-0">
                       · {slice.count} çeşid
                     </span>
                   </div>
 
                   <div className="flex items-center gap-4 shrink-0">
-                    <span className="text-xs font-mono tabular-nums text-slate-500 w-12 text-right">
+                    <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400 w-12 text-right">
                       {slice.percentage.toFixed(1)}%
                     </span>
-                    <span className="text-sm font-semibold font-mono tabular-nums text-slate-900 min-w-[5.5rem] text-right">
+                    <span className="text-sm font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-100 min-w-[5.5rem] text-right">
                       {formatPrice(slice.value)}
                     </span>
                   </div>

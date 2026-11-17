@@ -146,6 +146,9 @@ service cloud.firestore {
           'unitPrice',
           'totalAmount',
           'ownerId',
+          'receiptNumber',
+          'paymentMethod',
+          'cashierEmail',
           'soldAt'
         ])
         && isValidId(data.productId)
@@ -159,6 +162,9 @@ service cloud.firestore {
         && isValidNonNegativeNumber(data.totalAmount)
         && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
         && data.ownerId == request.auth.uid
+        && isValidOptionalString(data, 'receiptNumber', 40)
+        && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card'])
+        && isValidOptionalString(data, 'cashierEmail', 160)
         && data.soldAt is timestamp;
     }
 
@@ -170,6 +176,31 @@ service cloud.firestore {
         && data.addedBy is string && data.addedBy.size() >= 1 && data.addedBy.size() <= 128
         && data.addedBy == request.auth.uid
         && data.createdAt is timestamp;
+    }
+
+    function isValidReceiptSettings(data) {
+      return data.keys().hasAll(['storeName', 'paperWidth', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly([
+          'storeName',
+          'subtitle',
+          'address',
+          'phone',
+          'taxId',
+          'footerNote',
+          'paperWidth',
+          'updatedBy',
+          'updatedAt'
+        ])
+        && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
+        && isValidOptionalString(data, 'subtitle', 100)
+        && isValidOptionalString(data, 'address', 140)
+        && isValidOptionalString(data, 'phone', 40)
+        && isValidOptionalString(data, 'taxId', 40)
+        && isValidOptionalString(data, 'footerNote', 160)
+        && data.paperWidth in ['80mm', '58mm']
+        && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+        && data.updatedBy == request.auth.uid
+        && data.updatedAt is timestamp;
     }
 
     // --- Collection: /authorized_users/{emailId} ---
@@ -286,6 +317,37 @@ service cloud.firestore {
 
       allow delete: if isAuthorizedStoreUser()
         && isValidId(saleId);
+    }
+
+    // --- Collection: /store_settings/{settingId} ---
+    match /store_settings/{settingId} {
+      allow get: if isAuthorizedStoreUser()
+        && settingId == 'receipt';
+
+      allow list: if false;
+
+      allow create: if isAuthorizedStoreUser()
+        && settingId == 'receipt'
+        && isValidReceiptSettings(incoming())
+        && incoming().updatedAt == request.time;
+
+      allow update: if isAuthorizedStoreUser()
+        && settingId == 'receipt'
+        && isValidReceiptSettings(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'storeName',
+          'subtitle',
+          'address',
+          'phone',
+          'taxId',
+          'footerNote',
+          'paperWidth',
+          'updatedBy',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
     }
   }
 }

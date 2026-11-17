@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -8,10 +9,27 @@
 @layer base {
   html {
     font-family: var(--font-sans);
+    background-color: #e6ecf2;
+    color: #0f172a;
+    color-scheme: light;
+  }
+
+  html.dark {
+    background-color: #0b1120;
+    color: #f1f5f9;
+    color-scheme: dark;
   }
 
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 }
 
@@ -22,5 +40,59 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thermal POS Receipt Print Styling (Zyklen Z-604 / 58mm & 80mm ESC/POS drivers) */
+#thermal-receipt-print-root {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body > *:not(#thermal-receipt-print-root),
+  body[data-thermal-print-only="true"] > *:not(#thermal-receipt-print-root),
+  .thermal-print-hidden {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  #thermal-receipt-print-root {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    inset: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 80mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  #thermal-receipt-print-root[data-paper-width="58mm"] {
+    max-width: 58mm !important;
+  }
+
+  #thermal-receipt-print-root * {
+    visibility: visible !important;
   }
 }

@@ -181,6 +181,21 @@
           "maxLength": 128,
           "description": "Firebase Auth UID of the store owner."
         },
+        "receiptNumber": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional shared receipt number grouping items sold in one transaction."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "maxLength": 16,
+          "description": "Optional payment method ('cash' or 'card')."
+        },
+        "cashierEmail": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional email of the cashier who completed the sale."
+        },
         "soldAt": {
           "type": "string",
           "format": "date-time",
@@ -234,6 +249,66 @@
         "addedBy",
         "createdAt"
       ]
+    },
+    "ReceiptSettings": {
+      "title": "ReceiptSettings",
+      "description": "Thermal POS receipt header, contact details, and paper width configuration.",
+      "type": "object",
+      "properties": {
+        "storeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Store display title printed at top of receipt."
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Optional store subtitle line."
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Optional store address."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional contact phone number."
+        },
+        "taxId": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional VÖEN / tax identifier."
+        },
+        "footerNote": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional thank-you message at bottom of receipt."
+        },
+        "paperWidth": {
+          "type": "string",
+          "enum": ["80mm", "58mm"],
+          "description": "Thermal printer paper width."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of authorized user who updated settings."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        }
+      },
+      "required": [
+        "storeName",
+        "paperWidth",
+        "updatedBy",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -260,6 +335,12 @@
         "$ref": "#/entities/AuthorizedUser"
       },
       "description": "Allowlist of Google account emails permitted to access the store."
+    },
+    "/store_settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/ReceiptSettings"
+      },
+      "description": "Store configuration documents such as thermal receipt layout settings."
     }
   }
 }

@@ -75,6 +75,9 @@ export interface CategoryItem {
   createdAt: Timestamp | null;
 }
 
+export type PaymentMethod = 'cash' | 'card';
+export type ThermalPaperWidth = '80mm' | '58mm';
+
 export interface SaleRecord {
   id: string;
   productId: string;
@@ -86,7 +89,66 @@ export interface SaleRecord {
   unitPrice: number;
   totalAmount: number;
   ownerId: string;
+  receiptNumber?: string;
+  paymentMethod?: PaymentMethod;
+  cashierEmail?: string;
   soldAt: Timestamp | null;
+}
+
+export const RECEIPT_LIMITS = {
+  STORE_NAME_MAX: 80,
+  SUBTITLE_MAX: 100,
+  ADDRESS_MAX: 140,
+  PHONE_MAX: 40,
+  TAX_ID_MAX: 40,
+  FOOTER_NOTE_MAX: 160,
+  RECEIPT_NUMBER_MAX: 40,
+} as const;
+
+export interface ReceiptSettings {
+  storeName: string;
+  subtitle: string;
+  address: string;
+  phone: string;
+  taxId: string;
+  footerNote: string;
+  paperWidth: ThermalPaperWidth;
+}
+
+export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
+  storeName: 'OFİS ANBARI',
+  subtitle: 'Ofis və Dəftərxana Ləvazımatları',
+  address: '',
+  phone: '',
+  taxId: '',
+  footerNote: 'Alış-verişiniz üçün təşəkkür edirik!',
+  paperWidth: '80mm',
+};
+
+export interface CheckoutCartItem {
+  product: Product;
+  quantity: number;
+}
+
+export interface ReceiptLineItem {
+  productId: string;
+  productName: string;
+  barcode: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface ReceiptData {
+  receiptNumber: string;
+  issuedAt: Date;
+  cashierLabel: string;
+  paymentMethod: PaymentMethod;
+  items: ReceiptLineItem[];
+  totalAmount: number;
+  cashReceived?: number;
+  changeAmount?: number;
 }
 
 export const AUTH_LIMITS = {

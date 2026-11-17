@@ -223,23 +223,23 @@ export function BarcodeScannerModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 backdrop-blur-[2px] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="scanner-modal-title"
     >
-      <div className="w-full max-w-lg bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
-        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-200">
+      <div className="w-full max-w-lg bg-white dark:bg-[#131C31] border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden">
+        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60">
           <div>
-            <h2 id="scanner-modal-title" className="text-base font-semibold text-slate-900">
+            <h2 id="scanner-modal-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">
               {title}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 -mr-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+            className="p-2 -mr-1 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Bağla"
           >
             <X className="w-5 h-5" />
@@ -247,14 +247,14 @@ export function BarcodeScannerModal({
         </div>
 
         <div className="px-5 pt-4">
-          <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-lg">
+          <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg">
             <button
               type="button"
               onClick={() => setActiveTab('camera')}
               className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'camera'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <Camera className="w-4 h-4 shrink-0" />
@@ -265,8 +265,8 @@ export function BarcodeScannerModal({
               onClick={() => setActiveTab('gallery')}
               className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                 activeTab === 'gallery'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               <ImagePlus className="w-4 h-4 shrink-0" />
@@ -279,28 +279,28 @@ export function BarcodeScannerModal({
           {activeTab === 'camera' ? (
             <div className="space-y-3">
               {cameraError ? (
-                <div className="p-5 bg-slate-50 border border-slate-200 rounded-lg text-center space-y-3">
-                  <ScanBarcode className="w-8 h-8 text-slate-400 mx-auto" />
-                  <p className="text-sm text-slate-700">{cameraError}</p>
+                <div className="p-5 bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-lg text-center space-y-3">
+                  <ScanBarcode className="w-8 h-8 text-slate-400 dark:text-slate-500 mx-auto" />
+                  <p className="text-sm text-slate-700 dark:text-slate-300">{cameraError}</p>
                   <div className="flex items-center justify-center gap-2">
                     <button
                       type="button"
                       onClick={() => setSelectedDeviceIndex((i) => i)}
-                      className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
+                      className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
                     >
                       Yenidən yoxla
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveTab('gallery')}
-                      className="px-3 py-2 text-xs font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 cursor-pointer"
+                      className="px-3 py-2 text-xs font-medium text-white bg-blue-700 dark:bg-blue-600 rounded-lg hover:bg-blue-800 dark:hover:bg-blue-500 cursor-pointer"
                     >
                       Qalereyadan şəkil seç
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="relative aspect-[4/3] w-full bg-slate-950 rounded-lg overflow-hidden border border-slate-200">
+                <div className="relative aspect-[4/3] w-full bg-slate-950 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
                   <video
                     ref={videoRef}
                     className="w-full h-full object-cover"
@@ -347,20 +347,20 @@ export function BarcodeScannerModal({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full border border-dashed border-slate-300 hover:border-blue-600 bg-slate-50 hover:bg-blue-50/40 rounded-lg p-6 text-center transition-colors cursor-pointer"
+                className="w-full border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-600 dark:hover:border-blue-500 bg-slate-50 dark:bg-slate-900/60 hover:bg-blue-50/40 dark:hover:bg-blue-950/30 rounded-lg p-6 text-center transition-colors cursor-pointer"
               >
-                <Upload className="w-7 h-7 text-slate-500 mx-auto mb-2" />
-                <div className="text-sm font-medium text-slate-900">
+                <Upload className="w-7 h-7 text-slate-500 dark:text-slate-400 mx-auto mb-2" />
+                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
                   {galleryBusy ? 'Barkod axtarılır...' : 'Qalereyadan və ya cihazdan şəkil seçin'}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   JPG, PNG, WEBP formatlı məhsul və ya barkod şəkilləri dəstəklənir
                 </div>
               </button>
 
               {galleryPreview ? (
-                <div className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
-                  <div className="max-h-52 overflow-hidden flex items-center justify-center bg-slate-900/5">
+                <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900">
+                  <div className="max-h-52 overflow-hidden flex items-center justify-center bg-slate-900/5 dark:bg-slate-950/60">
                     <img
                       src={galleryPreview}
                       alt="Seçilmiş barkod şəkli"
@@ -368,30 +368,30 @@ export function BarcodeScannerModal({
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  <div className="p-3 bg-white border-t border-slate-200">
+                  <div className="p-3 bg-white dark:bg-[#131C31] border-t border-slate-200 dark:border-slate-800">
                     {galleryBusy ? (
-                      <p className="text-xs text-slate-600">Şəkildəki barkod oxunur...</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-400">Şəkildəki barkod oxunur...</p>
                     ) : galleryHit ? (
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                             <CheckCircle2 className="w-4 h-4 shrink-0" />
                             <span>Barkod tapıldı</span>
                           </div>
-                          <div className="font-mono tabular-nums text-sm font-semibold text-slate-900 mt-0.5 truncate">
+                          <div className="font-mono tabular-nums text-sm font-semibold text-slate-900 dark:text-slate-100 mt-0.5 truncate">
                             {galleryHit.code}
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => onDetected(galleryHit)}
-                          className="px-4 py-2 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                          className="px-4 py-2 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
                         >
                           Bu barkodu istifadə et
                         </button>
                       </div>
                     ) : galleryError ? (
-                      <p className="text-xs text-red-700">{galleryError}</p>
+                      <p className="text-xs text-red-700 dark:text-red-400">{galleryError}</p>
                     ) : null}
                   </div>
                 </div>
