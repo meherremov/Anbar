@@ -24,6 +24,7 @@ import {
   type ValidatedProductPayload,
 } from '../utils/barcodeDecoder';
 import { BarcodeGraphic } from './BarcodeGraphic';
+import { ProductThumb } from './ProductThumb';
 
 interface ProductDrawerProps {
   isOpen: boolean;
@@ -244,23 +245,31 @@ export function ProductDrawer({
         aria-labelledby="drawer-title"
       >
         <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 shrink-0">
-          <div>
-            <h2 id="drawer-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {mode === 'create' ? 'Yeni məhsul əlavə et' : 'Məhsulu redaktə et'}
-            </h2>
-            {mode === 'edit' ? (
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {autoSaveState === 'saving'
-                  ? 'Dəyişikliklər yadda saxlanılır...'
-                  : autoSaveState === 'saved'
-                  ? 'Avtomatik yadda saxlanıldı'
-                  : 'Dəyişikliklər avtomatik olaraq buludda yadda saxlanılır'}
-              </p>
-            ) : (
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Barkodu kamera və ya qalereyadan oxudub məhsulu əlavə edin
-              </p>
-            )}
+          <div className="flex items-center gap-3 min-w-0">
+            <ProductThumb
+              name={form.name}
+              category={form.category}
+              sizeClassName="w-10 h-10"
+              imgClassName="w-8 h-8"
+            />
+            <div className="min-w-0">
+              <h2 id="drawer-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
+                {mode === 'create' ? 'Yeni məhsul əlavə et' : 'Məhsulu redaktə et'}
+              </h2>
+              {mode === 'edit' ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  {autoSaveState === 'saving'
+                    ? 'Dəyişikliklər yadda saxlanılır...'
+                    : autoSaveState === 'saved'
+                    ? 'Avtomatik yadda saxlanıldı'
+                    : 'Dəyişikliklər avtomatik olaraq buludda yadda saxlanılır'}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                  Barkodu kamera və ya qalereyadan oxudub məhsulu əlavə edin
+                </p>
+              )}
+            </div>
           </div>
           <button
             type="button"

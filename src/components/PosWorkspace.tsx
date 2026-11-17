@@ -1,14 +1,10 @@
 import {
   AlertCircle,
   Banknote,
-  BookOpen,
   Check,
   CheckCircle2,
   CreditCard,
-  FolderOpen,
   Minus,
-  Package,
-  PenTool,
   Plus,
   Printer,
   QrCode,
@@ -37,12 +33,14 @@ import type {
   ReceiptSettings,
 } from '../types/inventory';
 import { triggerBrowserPrint } from '../utils/thermalPrinter';
+import { ProductThumb } from './ProductThumb';
 
 interface PosWorkspaceProps {
   products: Product[];
   receiptSettings: ReceiptSettings;
   externalScan?: { seq: number; scan: BarcodeScanResult } | null;
   hasBlockingModal: boolean;
+  hasPastSales?: boolean;
   onConfirmCheckout: (
     items: CheckoutCartItem[],
     options: {
@@ -54,6 +52,7 @@ interface PosWorkspaceProps {
   onOpenCameraScanner: () => void;
   onCreateMissingProduct: (scan?: BarcodeScanResult) => void;
   onOpenReceiptPreview: (receipt: ReceiptData) => void;
+  onReprintLatestSale?: () => void;
 }
 
 function playScanBeep(): void {
@@ -81,51 +80,6 @@ function playScanBeep(): void {
   }
 }
 
-function getCategoryIcon(category: string, name: string) {
-  const lower = `${category} ${name}`.toLowerCase();
-  if (
-    lower.includes('qələm') ||
-    lower.includes('marker') ||
-    lower.includes('karandaş')
-  ) {
-    return {
-      Icon: PenTool,
-      bg: 'bg-blue-50 dark:bg-blue-950/60',
-      fg: 'text-blue-600 dark:text-blue-400',
-    };
-  }
-  if (
-    lower.includes('dəftər') ||
-    lower.includes('kağız') ||
-    lower.includes('bloknot') ||
-    lower.includes('kitab')
-  ) {
-    return {
-      Icon: BookOpen,
-      bg: 'bg-indigo-50 dark:bg-indigo-950/60',
-      fg: 'text-indigo-600 dark:text-indigo-400',
-    };
-  }
-  if (lower.includes('qovluq') || lower.includes('arxiv') || lower.includes('fayl')) {
-    return {
-      Icon: FolderOpen,
-      bg: 'bg-amber-50 dark:bg-amber-950/60',
-      fg: 'text-amber-600 dark:text-amber-400',
-    };
-  }
-  if (lower.includes('texnika') || lower.includes('printer') || lower.includes('kartric')) {
-    return {
-      Icon: Printer,
-      bg: 'bg-slate-100 dark:bg-slate-800',
-      fg: 'text-slate-700 dark:text-slate-300',
-    };
-  }
-  return {
-    Icon: Package,
-    bg: 'bg-sky-50 dark:bg-sky-950/60',
-    fg: 'text-sky-600 dark:text-sky-400',
-  };
-}
 
 function ScannerGunIcon({ className }: { className?: string }) {
   return (
@@ -153,13 +107,16 @@ export function PosWorkspace({
   receiptSettings,
   externalScan,
   hasBlockingModal,
+  hasPastSales = false,
   onConfirmCheckout,
   onOpenCameraScanner,
   onCreateMissingProduct,
   onOpenReceiptPreview,
+  onReprintLatestSale,
 }: PosWorkspaceProps) {
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
   const [barcodeInput, setBarcodeInput] = useState<string>('');
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [discountInput, setDiscountInput] = useState<string>('');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
@@ -178,6 +135,7 @@ export function PosWorkspace({
   });
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const pickerInputRef = useRef<HTMLInputElement | null>(null);
   const productsRef = useRef<Product[]>(products);
   productsRef.current = products;
@@ -188,6 +146,20 @@ export function PosWorkspace({
       scanInputRef.current?.focus();
     }
   }, [hasBlockingModal, pickerOpen]);
+
+  // Dismiss suggestion dropdown on outside click
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(e.target as Node)
+      ) {
+        setSuggestionsDismissed(true);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
 
   useEffect(() => {
     if (pickerOpen) {
@@ -300,6 +272,7 @@ export function PosWorkspace({
   }, [paymentMethod, cashReceivedInput]);
 
   const inputSuggestions = useMemo(() => {
+    if (suggestionsDismissed) return [];
     const q = barcodeInput.trim().toLowerCase();
     if (!q || q.length < 2) return [];
     const exactExists = products.some((p) => p.barcode.trim().toLowerCase() === q);
@@ -310,7 +283,7 @@ export function PosWorkspace({
         return hay.includes(q);
       })
       .slice(0, 6);
-  }, [products, barcodeInput]);
+  }, [products, barcodeInput, suggestionsDismissed]);
 
   const pickerCandidates = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
@@ -374,11 +347,15 @@ export function PosWorkspace({
       onOpenReceiptPreview(lastReceipt);
       return;
     }
+    if (hasPastSales && onReprintLatestSale) {
+      onReprintLatestSale();
+      return;
+    }
     setStatusBanner({
       tone: 'warn',
       text: 'Çap etmək üçün əvvəlcə ödənişi təsdiqləyin (F12) və ya Satış Hesabatından çeki seçin.',
     });
-  }, [lastReceipt, onOpenReceiptPreview]);
+  }, [lastReceipt, hasPastSales, onReprintLatestSale, onOpenReceiptPreview]);
 
   const handleConfirmPayment = useCallback(async () => {
     if (submitting) return;
@@ -470,6 +447,16 @@ export function PosWorkspace({
     const onKeyDown = (e: KeyboardEvent) => {
       if (hasBlockingModal) return;
 
+      if (e.key === 'Escape') {
+        if (pickerOpen) {
+          e.preventDefault();
+          setPickerOpen(false);
+        } else {
+          setSuggestionsDismissed(true);
+        }
+        return;
+      }
+
       if (e.key === 'F2') {
         e.preventDefault();
         setPickerOpen((prev) => !prev);
@@ -515,7 +502,7 @@ export function PosWorkspace({
       {/* Left / Main POS Pane */}
       <div className="space-y-4 min-w-0">
         {/* Scan Input Row */}
-        <div className="relative">
+        <div className="relative" ref={searchContainerRef}>
           <form onSubmit={handleScanSubmit} className="flex items-stretch gap-2.5">
             <div className="flex-1 flex items-center bg-white dark:bg-[#131C31] border-2 border-[#3B82F6]/60 focus-within:border-[#1976F3] rounded-xl px-4 shadow-xs transition-colors">
               <ScannerGunIcon className="w-5 h-5 text-[#13233F] dark:text-slate-300 shrink-0 mr-3" />
@@ -523,7 +510,11 @@ export function PosWorkspace({
                 ref={scanInputRef}
                 type="text"
                 value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
+                onFocus={() => setSuggestionsDismissed(false)}
+                onChange={(e) => {
+                  setBarcodeInput(e.target.value);
+                  setSuggestionsDismissed(false);
+                }}
                 placeholder="Barkodu oxudun..."
                 aria-label="Barkodu oxudun və ya məhsul axtarın"
                 className="w-full py-3 bg-transparent text-sm sm:text-base font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none"
@@ -533,6 +524,7 @@ export function PosWorkspace({
                   type="button"
                   onClick={() => {
                     setBarcodeInput('');
+                    setSuggestionsDismissed(false);
                     scanInputRef.current?.focus();
                   }}
                   className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
@@ -568,12 +560,20 @@ export function PosWorkspace({
                   }}
                   className="w-full px-4 py-2.5 flex items-center justify-between gap-3 text-left hover:bg-blue-50/70 dark:hover:bg-slate-800/70 cursor-pointer"
                 >
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
-                      {item.name}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                      BAR: {item.barcode} · Stok: {item.quantity} {item.unit}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <ProductThumb
+                      name={item.name}
+                      category={item.category}
+                      sizeClassName="w-9 h-9"
+                      imgClassName="w-7 h-7"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                        {item.name}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                        BAR: {item.barcode} · Stok: {item.quantity} {item.unit}
+                      </div>
                     </div>
                   </div>
                   <span className="text-sm font-bold text-[#1976F3] dark:text-blue-400 tabular-nums shrink-0">
@@ -636,10 +636,6 @@ export function PosWorkspace({
                     {cart.map((item, idx) => {
                       const lineTotal =
                         Math.round(item.quantity * item.product.salePrice * 100) / 100;
-                      const { Icon, bg, fg } = getCategoryIcon(
-                        item.product.category,
-                        item.product.name
-                      );
                       return (
                         <tr
                           key={item.product.id}
@@ -650,11 +646,12 @@ export function PosWorkspace({
                           </td>
                           <td className="py-3.5 px-4">
                             <div className="flex items-center gap-3 min-w-0">
-                              <span
-                                className={`w-9 h-9 rounded-lg ${bg} ${fg} inline-flex items-center justify-center shrink-0`}
-                              >
-                                <Icon className="w-4 h-4" />
-                              </span>
+                              <ProductThumb
+                                name={item.product.name}
+                                category={item.product.category}
+                                sizeClassName="w-10 h-10"
+                                imgClassName="w-8 h-8"
+                              />
                               <div className="min-w-0">
                                 <div className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[260px]">
                                   {item.product.name}
@@ -734,12 +731,20 @@ export function PosWorkspace({
                   return (
                     <div key={item.product.id} className="p-4 space-y-2.5">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                            {idx + 1}. {item.product.name}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                            (BAR: {item.product.barcode}) · {item.product.salePrice.toFixed(2)} AZN
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <ProductThumb
+                            name={item.product.name}
+                            category={item.product.category}
+                            sizeClassName="w-9 h-9"
+                            imgClassName="w-7 h-7"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                              {idx + 1}. {item.product.name}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                              (BAR: {item.product.barcode}) · {item.product.salePrice.toFixed(2)} AZN
+                            </div>
                           </div>
                         </div>
                         <button
@@ -1115,19 +1120,18 @@ export function PosWorkspace({
                   Axtarışa uyğun məhsul tapılmadı.
                 </div>
               ) : (
-                pickerCandidates.map((p) => {
-                  const { Icon, bg, fg } = getCategoryIcon(p.category, p.name);
-                  return (
+                pickerCandidates.map((p) => (
                     <div
                       key={p.id}
                       className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <span
-                          className={`w-9 h-9 rounded-lg ${bg} ${fg} inline-flex items-center justify-center shrink-0`}
-                        >
-                          <Icon className="w-4 h-4" />
-                        </span>
+                        <ProductThumb
+                          name={p.name}
+                          category={p.category}
+                          sizeClassName="w-10 h-10"
+                          imgClassName="w-8 h-8"
+                        />
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                             {p.name}
@@ -1152,8 +1156,7 @@ export function PosWorkspace({
                         <span>Səbətə at</span>
                       </button>
                     </div>
-                  );
-                })
+                ))
               )}
             </div>
           </div>

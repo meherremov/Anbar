@@ -56,6 +56,7 @@ import type { AppTheme } from '../utils/theme';
 import { AuthorizedUsersPanel } from './AuthorizedUsersPanel';
 import { CategoryValueChart } from './CategoryValueChart';
 import { PosWorkspace } from './PosWorkspace';
+import { ProductThumb } from './ProductThumb';
 import { SalesReportModule } from './SalesReportModule';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -283,6 +284,15 @@ export function InventoryDashboard({
       todaySalesRevenue,
     };
   }, [products, sales, now]);
+
+  const latestSale = useMemo(() => {
+    if (sales.length === 0) return null;
+    return [...sales].sort((a, b) => {
+      const aMs = a.soldAt?.toMillis?.() ?? 0;
+      const bMs = b.soldAt?.toMillis?.() ?? 0;
+      return bMs - aMs;
+    })[0];
+  }, [sales]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -841,10 +851,14 @@ export function InventoryDashboard({
               receiptSettings={receiptSettings}
               externalScan={externalPosScan}
               hasBlockingModal={hasBlockingModal}
+              hasPastSales={Boolean(latestSale)}
               onConfirmCheckout={onConfirmCheckout}
               onOpenCameraScanner={() => onOpenQuickScanner('camera', 'pos')}
               onCreateMissingProduct={onCreateMissingProductFromPos}
               onOpenReceiptPreview={onOpenReceiptPreview}
+              onReprintLatestSale={
+                latestSale ? () => onReprintSale(latestSale) : undefined
+              }
             />
           ) : activeView === 'settings' ? (
             <SettingsPanel
@@ -980,10 +994,10 @@ export function InventoryDashboard({
                 </div>
               </div>
 
-              {/* 4-Column Flat KPI Strip */}
+              {/* 5-Column Flat KPI Strip */}
               <section
                 aria-label="Anbar göstəriciləri"
-                className="grid grid-cols-2 lg:grid-cols-4 bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl divide-y lg:divide-y-0 divide-x divide-slate-200 dark:divide-slate-800 overflow-hidden shadow-xs"
+                className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl divide-y lg:divide-y-0 divide-x divide-slate-200 dark:divide-slate-800 overflow-hidden shadow-xs"
               >
                 <div className="p-4 sm:p-5">
                   <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -1009,11 +1023,19 @@ export function InventoryDashboard({
                     {formatPrice(metrics.totalValue)}
                   </div>
                 </div>
+                <div className="p-4 sm:p-5 bg-emerald-50/45 dark:bg-emerald-950/25">
+                  <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                    Bugünkü satış
+                  </div>
+                  <div className="text-2xl font-bold text-[#05A660] dark:text-emerald-400 font-mono tabular-nums mt-1">
+                    {formatPrice(metrics.todaySalesRevenue)}
+                  </div>
+                </div>
                 <div
-                  className={`p-4 sm:p-5 ${
+                  className={`p-4 sm:p-5 col-span-2 md:col-span-1 ${
                     metrics.lowOrOutCount > 0
                       ? 'bg-amber-50/60 dark:bg-amber-950/30'
-                      : 'bg-emerald-50/40 dark:bg-emerald-950/20'
+                      : 'bg-slate-50/60 dark:bg-slate-900/40'
                   }`}
                 >
                   <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -1320,18 +1342,28 @@ export function InventoryDashboard({
                                   }
                                   className="hover:bg-blue-50/45 dark:hover:bg-slate-800/60 hover:shadow-md hover:shadow-slate-900/5 dark:hover:shadow-black/30 transition-[background-color,box-shadow] duration-200 ease-out"
                                 >
-                                  <td className="py-3 px-4 max-w-[260px]">
-                                    <button
-                                      type="button"
-                                      onClick={() => onOpenEditProduct(product)}
-                                      className="text-left font-semibold text-slate-900 dark:text-slate-100 hover:text-[#1976F3] dark:hover:text-blue-400 truncate block w-full cursor-pointer"
-                                    >
-                                      {product.name}
-                                    </button>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                                      {[product.brand, product.shelfLocation]
-                                        .filter(Boolean)
-                                        .join(' · ') || '—'}
+                                  <td className="py-3 px-4 max-w-[280px]">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <ProductThumb
+                                        name={product.name}
+                                        category={product.category}
+                                        sizeClassName="w-10 h-10"
+                                        imgClassName="w-8 h-8"
+                                      />
+                                      <div className="min-w-0">
+                                        <button
+                                          type="button"
+                                          onClick={() => onOpenEditProduct(product)}
+                                          className="text-left font-semibold text-slate-900 dark:text-slate-100 hover:text-[#1976F3] dark:hover:text-blue-400 truncate block w-full cursor-pointer"
+                                        >
+                                          {product.name}
+                                        </button>
+                                        <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                                          {[product.brand, product.shelfLocation]
+                                            .filter(Boolean)
+                                            .join(' · ') || '—'}
+                                        </div>
+                                      </div>
                                     </div>
                                   </td>
 
@@ -1478,18 +1510,26 @@ export function InventoryDashboard({
                             className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 transition-[box-shadow,border-color] duration-200 ease-out hover:shadow-lg hover:shadow-slate-900/10 dark:hover:shadow-black/45 hover:border-blue-300/80 dark:hover:border-blue-700/70"
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenEditProduct(product)}
-                                  className="text-left text-sm font-semibold text-slate-900 dark:text-slate-100 hover:text-[#1976F3] dark:hover:text-blue-400 cursor-pointer"
-                                >
-                                  {product.name}
-                                </button>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                                  {product.category}
-                                  {product.brand ? ` · ${product.brand}` : ''}
-                                  {product.shelfLocation ? ` · ${product.shelfLocation}` : ''}
+                              <div className="flex items-center gap-3 min-w-0">
+                                <ProductThumb
+                                  name={product.name}
+                                  category={product.category}
+                                  sizeClassName="w-10 h-10"
+                                  imgClassName="w-8 h-8"
+                                />
+                                <div className="min-w-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenEditProduct(product)}
+                                    className="text-left text-sm font-semibold text-slate-900 dark:text-slate-100 hover:text-[#1976F3] dark:hover:text-blue-400 cursor-pointer"
+                                  >
+                                    {product.name}
+                                  </button>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    {product.category}
+                                    {product.brand ? ` · ${product.brand}` : ''}
+                                    {product.shelfLocation ? ` · ${product.shelfLocation}` : ''}
+                                  </div>
                                 </div>
                               </div>
                               <div className="font-mono tabular-nums text-sm font-semibold text-slate-900 dark:text-white whitespace-nowrap">

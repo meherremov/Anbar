@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { SaleRecord } from '../types/inventory';
+import { ProductThumb } from './ProductThumb';
 
 interface SalesReportModuleProps {
   sales: SaleRecord[];
@@ -306,12 +307,22 @@ export function SalesReportModule({
                             : ''}
                         </div>
                       </td>
-                      <td className="py-3 px-4 max-w-[240px]">
-                        <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
-                          {sale.productName}
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                          {sale.category}
+                      <td className="py-3 px-4 max-w-[260px]">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <ProductThumb
+                            name={sale.productName}
+                            category={sale.category}
+                            sizeClassName="w-8 h-8"
+                            imgClassName="w-6 h-6"
+                          />
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                              {sale.productName}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                              {sale.category}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td className="py-3 px-4 font-mono tabular-nums text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
@@ -358,13 +369,21 @@ export function SalesReportModule({
               {filteredSales.map((sale) => (
                 <div key={sale.id} className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-                        {sale.productName}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        {sale.category} ·{' '}
-                        <span className="font-mono tabular-nums">{sale.barcode}</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ProductThumb
+                        name={sale.productName}
+                        category={sale.category}
+                        sizeClassName="w-9 h-9"
+                        imgClassName="w-7 h-7"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                          {sale.productName}
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          {sale.category} ·{' '}
+                          <span className="font-mono tabular-nums">{sale.barcode}</span>
+                        </div>
                       </div>
                     </div>
                     <div className="font-mono tabular-nums text-sm font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">

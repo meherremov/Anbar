@@ -40,6 +40,7 @@ import {
   listCameras,
 } from '../utils/barcodeDecoder';
 import { triggerBrowserPrint } from '../utils/thermalPrinter';
+import { ProductThumb } from './ProductThumb';
 import { ReceiptActionControls } from './ReceiptActionControls';
 import { ThermalReceipt } from './ThermalReceipt';
 
@@ -126,6 +127,7 @@ export function SaleModal({
   const [cameraStatus, setCameraStatus] = useState<string>('Kamera işə salınır...');
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceIndex, setSelectedDeviceIndex] = useState<number>(0);
+  const [cameraRetryTick, setCameraRetryTick] = useState<number>(0);
 
   // Gallery state
   const [galleryBusy, setGalleryBusy] = useState<boolean>(false);
@@ -174,6 +176,14 @@ export function SaleModal({
       stopCamera();
       resetForNewSale();
       setInputMode('camera');
+      return;
+    }
+    try {
+      setAutoPrintAfterSale(
+        window.localStorage.getItem(AUTO_PRINT_STORAGE_KEY) === 'true'
+      );
+    } catch {
+      // Ignore storage error
     }
   }, [isOpen, stopCamera, resetForNewSale]);
 
@@ -350,6 +360,7 @@ export function SaleModal({
     inputMode,
     completedReceipt,
     selectedDeviceIndex,
+    cameraRetryTick,
     stopCamera,
     handleBarcodeHit,
   ]);
@@ -676,6 +687,13 @@ export function SaleModal({
                     <div className="flex flex-wrap items-center justify-center gap-2">
                       <button
                         type="button"
+                        onClick={() => setCameraRetryTick((n) => n + 1)}
+                        className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                      >
+                        Yenidən yoxla
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setInputMode('gallery')}
                         className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
                       >
@@ -808,12 +826,20 @@ export function SaleModal({
                           key={p.id}
                           className="px-3 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/70"
                         >
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                              {p.name}
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums truncate">
-                              {p.barcode} · Stok: {p.quantity} {p.unit} · {p.salePrice.toFixed(2)} ₼
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ProductThumb
+                              name={p.name}
+                              category={p.category}
+                              sizeClassName="w-8 h-8"
+                              imgClassName="w-6 h-6"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                                {p.name}
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums truncate">
+                                {p.barcode} · Stok: {p.quantity} {p.unit} · {p.salePrice.toFixed(2)} ₼
+                              </div>
                             </div>
                           </div>
                           <button
@@ -874,13 +900,21 @@ export function SaleModal({
                       return (
                         <div key={item.product.id} className="p-3 space-y-2">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                                {item.product.name}
-                              </div>
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                                {item.product.salePrice.toFixed(2)} ₼ / {item.product.unit} · Stok:{' '}
-                                {item.product.quantity}
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <ProductThumb
+                                name={item.product.name}
+                                category={item.product.category}
+                                sizeClassName="w-8 h-8"
+                                imgClassName="w-6 h-6"
+                              />
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                                  {item.product.name}
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                                  {item.product.salePrice.toFixed(2)} ₼ / {item.product.unit} · Stok:{' '}
+                                  {item.product.quantity}
+                                </div>
                               </div>
                             </div>
                             <button
