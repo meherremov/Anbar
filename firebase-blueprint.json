@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Office supply store inventory product with barcode and stock tracking.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Product display name."
+        },
+        "barcode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_\\-\\.\\/\\+:=\\?&%# ]+$",
+          "description": "Product barcode string scanned from camera, gallery image, or entered manually."
+        },
+        "barcodeFormat": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Detected or manual barcode format (e.g. EAN_13, CODE_128, QR_CODE, MANUAL)."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Product category name."
+        },
+        "brand": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Optional brand or manufacturer name."
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Current stock quantity (non-negative)."
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "description": "Unit of measure (e.g. ədəd, qutu, paket, dəst, rulon)."
+        },
+        "purchasePrice": {
+          "type": "number",
+          "description": "Optional purchase price in AZN (non-negative)."
+        },
+        "salePrice": {
+          "type": "number",
+          "description": "Sale price in AZN (non-negative)."
+        },
+        "minStock": {
+          "type": "number",
+          "description": "Minimum stock alert threshold (non-negative)."
+        },
+        "shelfLocation": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Optional shelf or storage location label."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional owner notes for this product."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the store owner."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        }
+      },
+      "required": [
+        "name",
+        "barcode",
+        "barcodeFormat",
+        "category",
+        "quantity",
+        "unit",
+        "salePrice",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Custom office supply category managed by the store owner.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Category label."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the store owner."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "name",
+        "ownerId",
+        "createdAt"
+      ]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Completed point-of-sale transaction deducting product stock.",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Referenced product document ID."
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Snapshot of product name at sale time."
+        },
+        "barcode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_\\-\\.\\/\\+:=\\?&%# ]+$",
+          "description": "Snapshot of product barcode at sale time."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Product category at sale time."
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Sold quantity (strictly positive)."
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "description": "Unit of measure."
+        },
+        "unitPrice": {
+          "type": "number",
+          "description": "Sale unit price in AZN."
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total transaction amount in AZN."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the store owner."
+        },
+        "soldAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the sale."
+        }
+      },
+      "required": [
+        "productId",
+        "productName",
+        "barcode",
+        "category",
+        "quantity",
+        "unit",
+        "unitPrice",
+        "totalAmount",
+        "ownerId",
+        "soldAt"
+      ]
+    },
+    "AuthorizedUser": {
+      "title": "AuthorizedUser",
+      "description": "Google account email allowlisted by the primary store owner to access the store.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "pattern": "^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$",
+          "description": "Normalized lowercase Google account email."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Optional display label or note for the authorized person."
+        },
+        "addedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the primary owner who added this account."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when access was granted."
+        }
+      },
+      "required": [
+        "email",
+        "addedBy",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "Office supply store products managed by authorized store users."
+    },
+    "/categories/{categoryId}": {
+      "schema": {
+        "$ref": "#/entities/Category"
+      },
+      "description": "Store product categories managed by authorized store users."
+    },
+    "/sales/{saleId}": {
+      "schema": {
+        "$ref": "#/entities/Sale"
+      },
+      "description": "Completed sales records managed by authorized store users."
+    },
+    "/authorized_users/{emailId}": {
+      "schema": {
+        "$ref": "#/entities/AuthorizedUser"
+      },
+      "description": "Allowlist of Google account emails permitted to access the store."
+    }
+  }
+}

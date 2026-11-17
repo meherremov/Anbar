@@ -1,0 +1,6 @@
+{
+  "name": "Ofis Anbarı",
+  "description": "Ofis ləvazımatları mağazası üçün kamera və qalereya barkod skaneri ilə daimi stok və məhsul idarəetmə sistemi.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
