@@ -188,8 +188,13 @@
         },
         "paymentMethod": {
           "type": "string",
+          "enum": ["cash", "card", "mobile"],
           "maxLength": 16,
-          "description": "Optional payment method ('cash' or 'card')."
+          "description": "Optional payment method ('cash', 'card', or 'mobile')."
+        },
+        "discountAmount": {
+          "type": "number",
+          "description": "Optional non-negative discount amount applied to this sale line item in AZN."
         },
         "cashierEmail": {
           "type": "string",

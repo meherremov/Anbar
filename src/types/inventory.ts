@@ -75,7 +75,7 @@ export interface CategoryItem {
   createdAt: Timestamp | null;
 }
 
-export type PaymentMethod = 'cash' | 'card';
+export type PaymentMethod = 'cash' | 'card' | 'mobile';
 export type ThermalPaperWidth = '80mm' | '58mm';
 
 export interface SaleRecord {
@@ -88,6 +88,7 @@ export interface SaleRecord {
   unit: string;
   unitPrice: number;
   totalAmount: number;
+  discountAmount?: number;
   ownerId: string;
   receiptNumber?: string;
   paymentMethod?: PaymentMethod;
@@ -116,8 +117,8 @@ export interface ReceiptSettings {
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
-  storeName: 'OFİS ANBARI',
-  subtitle: 'Ofis və Dəftərxana Ləvazımatları',
+  storeName: 'MƏKTƏBLİ',
+  subtitle: 'Dəftərxana Sistemi',
   address: '',
   phone: '',
   taxId: '',
@@ -146,6 +147,8 @@ export interface ReceiptData {
   cashierLabel: string;
   paymentMethod: PaymentMethod;
   items: ReceiptLineItem[];
+  subtotalAmount?: number;
+  discountAmount?: number;
   totalAmount: number;
   cashReceived?: number;
   changeAmount?: number;
@@ -173,4 +176,13 @@ export interface BarcodeScanResult {
 
 export type StockFilter = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
 export type SortOption = 'updated_desc' | 'name_asc' | 'qty_asc' | 'price_desc';
-export type ActiveView = 'inventory' | 'low_stock' | 'categories' | 'sales' | 'users';
+export type ActiveView =
+  | 'pos'
+  | 'home'
+  | 'search'
+  | 'inventory'
+  | 'low_stock'
+  | 'categories'
+  | 'sales'
+  | 'users'
+  | 'settings';

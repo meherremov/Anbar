@@ -152,6 +152,9 @@ export function renderReceiptToCanvas(
 
   // Summary + Total
   y += smallStep + 8;
+  if (typeof receipt.discountAmount === 'number' && receipt.discountAmount > 0) {
+    y += smallStep * 2 + 4;
+  }
   y += totalFontSize + 14;
   if (typeof receipt.cashReceived === 'number' && receipt.cashReceived > 0) {
     y += smallStep * 2 + 8;
@@ -236,7 +239,13 @@ export function renderReceiptToCanvas(
   drawKeyVal('Çek №:', receipt.receiptNumber, true);
   drawKeyVal('Tarix:', formatDateTime(receipt.issuedAt));
   drawKeyVal('Kassir:', receipt.cashierLabel);
-  drawKeyVal('Ödəniş:', receipt.paymentMethod === 'card' ? 'Bank kartı' : 'Nağd', true);
+  const paymentLabel =
+    receipt.paymentMethod === 'card'
+      ? 'Bank kartı'
+      : receipt.paymentMethod === 'mobile'
+      ? 'Mobil ödəniş'
+      : 'Nağd';
+  drawKeyVal('Ödəniş:', paymentLabel, true);
 
   curY += 8;
   drawDashedLine(curY);
@@ -283,6 +292,14 @@ export function renderReceiptToCanvas(
   const totalUnits =
     Math.round(receipt.items.reduce((acc, item) => acc + item.quantity, 0) * 100) / 100;
   drawKeyVal('Çeşid / Miqdar:', `${receipt.items.length} çeşid · ${totalUnits} vahid`);
+  if (typeof receipt.discountAmount === 'number' && receipt.discountAmount > 0) {
+    const subtotalVal =
+      typeof receipt.subtotalAmount === 'number'
+        ? receipt.subtotalAmount
+        : receipt.totalAmount + receipt.discountAmount;
+    drawKeyVal('Ara cəm:', formatMoney(subtotalVal));
+    drawKeyVal('Endirim:', `-${formatMoney(receipt.discountAmount)}`);
+  }
   curY += 6;
 
   ctx.textAlign = 'left';

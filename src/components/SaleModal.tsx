@@ -944,7 +944,7 @@ export function SaleModal({
 
               {/* Payment & Checkout Footer */}
               <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('cash')}
@@ -969,6 +969,20 @@ export function SaleModal({
                     }`}
                   >
                     Bank kartı
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentMethod('mobile');
+                      setCashReceivedInput('');
+                    }}
+                    className={`py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                      paymentMethod === 'mobile'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Mobil ödəniş
                   </button>
                 </div>
 

@@ -32,6 +32,7 @@ import {
 } from './firebase';
 import {
   DEFAULT_RECEIPT_SETTINGS,
+  type ActiveView,
   type AuthorizedUser,
   type BarcodeScanResult,
   type CategoryItem,
@@ -79,6 +80,8 @@ function MainApp() {
   const [dataLoading, setDataLoading] = useState<boolean>(true);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
+  const [activeView, setActiveView] = useState<ActiveView>('pos');
+
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [drawerMode, setDrawerMode] = useState<'create' | 'edit'>('create');
@@ -89,13 +92,17 @@ function MainApp() {
   // Scanner modal state
   const [scannerOpen, setScannerOpen] = useState<boolean>(false);
   const [scannerTab, setScannerTab] = useState<'camera' | 'gallery'>('camera');
-  const [scannerTarget, setScannerTarget] = useState<'lookup' | 'field'>('lookup');
+  const [scannerTarget, setScannerTarget] = useState<'lookup' | 'field' | 'pos'>('lookup');
 
   // Sale & Receipt modals state
   const [saleOpen, setSaleOpen] = useState<boolean>(false);
   const [receiptSettingsOpen, setReceiptSettingsOpen] = useState<boolean>(false);
   const [reprintReceipt, setReprintReceipt] = useState<ReceiptData | null>(null);
   const [externalSaleScan, setExternalSaleScan] = useState<{
+    seq: number;
+    scan: BarcodeScanResult;
+  } | null>(null);
+  const [externalPosScan, setExternalPosScan] = useState<{
     seq: number;
     scan: BarcodeScanResult;
   } | null>(null);
@@ -250,11 +257,15 @@ function MainApp() {
             unit: String(data.unit || 'ədəd'),
             unitPrice: typeof data.unitPrice === 'number' ? data.unitPrice : 0,
             totalAmount: typeof data.totalAmount === 'number' ? data.totalAmount : 0,
+            discountAmount:
+              typeof data.discountAmount === 'number' ? data.discountAmount : undefined,
             ownerId: String(data.ownerId || ''),
             receiptNumber:
               typeof data.receiptNumber === 'string' ? data.receiptNumber : undefined,
             paymentMethod:
-              data.paymentMethod === 'card' || data.paymentMethod === 'cash'
+              data.paymentMethod === 'card' ||
+              data.paymentMethod === 'cash' ||
+              data.paymentMethod === 'mobile'
                 ? data.paymentMethod
                 : undefined,
             cashierEmail:
@@ -441,7 +452,11 @@ function MainApp() {
   const handleConfirmCheckout = useCallback(
     async (
       items: CheckoutCartItem[],
-      options: { paymentMethod: PaymentMethod; cashReceived?: number }
+      options: {
+        paymentMethod: PaymentMethod;
+        cashReceived?: number;
+        discountAmount?: number;
+      }
     ): Promise<ReceiptData> => {
       if (!user) {
         throw new Error('İstifadəçi sessiyası tapılmadı.');
@@ -456,7 +471,7 @@ function MainApp() {
       const pathHint = `checkout:${receiptNumber}`;
 
       try {
-        const lineItems = await runTransaction(db, async (transaction) => {
+        const result = await runTransaction(db, async (transaction) => {
           // 1. Read all product snapshots first before any writes
           const snapshots = await Promise.all(
             items.map(async (cartItem) => {
@@ -466,13 +481,20 @@ function MainApp() {
             })
           );
 
-          const prepared: Array<{
+          const baseItems: Array<{
             productRef: ReturnType<typeof doc>;
+            productId: string;
+            productName: string;
+            barcode: string;
+            category: string;
+            unit: string;
+            unitPrice: number;
+            sellQty: number;
             nextQty: number;
-            saleId: string;
-            salePayload: Record<string, unknown>;
-            receiptLine: ReceiptLineItem;
+            grossLineTotal: number;
           }> = [];
+
+          let subtotalAmount = 0;
 
           for (const { cartItem, productRef, snap } of snapshots) {
             if (!snap.exists()) {
@@ -492,65 +514,116 @@ function MainApp() {
             }
 
             const nextQty = Math.max(0, Math.round((currentQty - sellQty) * 100) / 100);
-            const lineTotal = Math.round(sellQty * unitPrice * 100) / 100;
+            const grossLineTotal = Math.round(sellQty * unitPrice * 100) / 100;
+            subtotalAmount += grossLineTotal;
+
+            baseItems.push({
+              productRef,
+              productId: cartItem.product.id,
+              productName,
+              barcode: String(data.barcode || ''),
+              category: String(data.category || 'Digər'),
+              unit,
+              unitPrice,
+              sellQty,
+              nextQty,
+              grossLineTotal,
+            });
+          }
+
+          subtotalAmount = Math.round(subtotalAmount * 100) / 100;
+          const requestedDiscount =
+            typeof options.discountAmount === 'number' && options.discountAmount > 0
+              ? Math.min(subtotalAmount, Math.round(options.discountAmount * 100) / 100)
+              : 0;
+
+          let remainingDiscount = requestedDiscount;
+          const receiptLines: ReceiptLineItem[] = [];
+
+          // 2. Apply all stock deductions and sale records atomically
+          for (let i = 0; i < baseItems.length; i++) {
+            const entry = baseItems[i];
+            let lineDiscount = 0;
+            if (requestedDiscount > 0 && subtotalAmount > 0) {
+              if (i === baseItems.length - 1) {
+                lineDiscount = Math.min(entry.grossLineTotal, remainingDiscount);
+              } else {
+                lineDiscount = Math.min(
+                  entry.grossLineTotal,
+                  Math.round(
+                    (requestedDiscount * (entry.grossLineTotal / subtotalAmount)) * 100
+                  ) / 100
+                );
+              }
+              lineDiscount = Math.max(0, Math.round(lineDiscount * 100) / 100);
+              remainingDiscount = Math.max(
+                0,
+                Math.round((remainingDiscount - lineDiscount) * 100) / 100
+              );
+            }
+
+            const netLineTotal = Math.max(
+              0,
+              Math.round((entry.grossLineTotal - lineDiscount) * 100) / 100
+            );
             const saleId = makeSafeDocId('sale');
 
             const salePayload: Record<string, unknown> = {
-              productId: cartItem.product.id,
-              productName: productName.slice(0, 160),
-              barcode: String(data.barcode || '').slice(0, 64),
-              category: String(data.category || 'Digər').slice(0, 64),
-              quantity: sellQty,
-              unit: unit.slice(0, 24),
-              unitPrice,
-              totalAmount: lineTotal,
+              productId: entry.productId,
+              productName: entry.productName.slice(0, 160),
+              barcode: entry.barcode.slice(0, 64),
+              category: entry.category.slice(0, 64),
+              quantity: entry.sellQty,
+              unit: entry.unit.slice(0, 24),
+              unitPrice: entry.unitPrice,
+              totalAmount: netLineTotal,
               ownerId: user.uid,
               receiptNumber,
               paymentMethod: options.paymentMethod,
               soldAt: serverTimestamp(),
             };
+            if (lineDiscount > 0) {
+              salePayload.discountAmount = lineDiscount;
+            }
             if (cashierEmail) {
               salePayload.cashierEmail = cashierEmail;
             }
 
-            prepared.push({
-              productRef,
-              nextQty,
-              saleId,
-              salePayload,
-              receiptLine: {
-                productId: cartItem.product.id,
-                productName,
-                barcode: String(data.barcode || ''),
-                quantity: sellQty,
-                unit,
-                unitPrice,
-                lineTotal,
-              },
-            });
-          }
-
-          // 2. Apply all stock deductions and sale records atomically
-          for (const entry of prepared) {
             transaction.update(entry.productRef, {
               quantity: entry.nextQty,
               updatedAt: serverTimestamp(),
             });
-            transaction.set(doc(db, 'sales', entry.saleId), entry.salePayload);
+            transaction.set(doc(db, 'sales', saleId), salePayload);
+
+            receiptLines.push({
+              productId: entry.productId,
+              productName: entry.productName,
+              barcode: entry.barcode,
+              quantity: entry.sellQty,
+              unit: entry.unit,
+              unitPrice: entry.unitPrice,
+              lineTotal: entry.grossLineTotal,
+            });
           }
 
-          return prepared.map((p) => p.receiptLine);
+          return {
+            lineItems: receiptLines,
+            subtotalAmount,
+            appliedDiscount: requestedDiscount,
+          };
         });
 
-        const totalAmount =
-          Math.round(lineItems.reduce((sum, l) => sum + l.lineTotal, 0) * 100) / 100;
+        const totalAmount = Math.max(
+          0,
+          Math.round((result.subtotalAmount - result.appliedDiscount) * 100) / 100
+        );
         const changeAmount =
           typeof options.cashReceived === 'number' && options.cashReceived >= totalAmount
             ? Math.round((options.cashReceived - totalAmount) * 100) / 100
             : undefined;
 
         showNotice(
-          `Satış tamamlandı (${receiptNumber}) · ${lineItems.length} çeşid · ${totalAmount.toFixed(2)} ₼`
+          `Satış tamamlandı (${receiptNumber}) · ${result.lineItems.length} çeşid · ${totalAmount.toFixed(2)} AZN`
         );
 
         return {
@@ -558,7 +631,9 @@ function MainApp() {
           issuedAt: new Date(),
           cashierLabel,
           paymentMethod: options.paymentMethod,
-          items: lineItems,
+          items: result.lineItems,
+          subtotalAmount: result.subtotalAmount,
+          discountAmount: result.appliedDiscount > 0 ? result.appliedDiscount : undefined,
           totalAmount,
           cashReceived: options.cashReceived,
           changeAmount,
@@ -614,9 +689,14 @@ function MainApp() {
         quantity: s.quantity,
         unit: s.unit,
         unitPrice: s.unitPrice,
-        lineTotal: s.totalAmount,
+        lineTotal: Math.round(s.quantity * s.unitPrice * 100) / 100,
       }));
       const totalAmount =
+        Math.round(source.reduce((sum, s) => sum + s.totalAmount, 0) * 100) / 100;
+      const discountAmount =
+        Math.round(source.reduce((sum, s) => sum + (s.discountAmount ?? 0), 0) * 100) /
+        100;
+      const subtotalAmount =
         Math.round(items.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
       const issuedAt =
         targetSale.soldAt && typeof targetSale.soldAt.toDate === 'function'
@@ -630,6 +710,8 @@ function MainApp() {
         cashierLabel: cashierEmail.split('@')[0] || 'Kassir',
         paymentMethod: targetSale.paymentMethod || 'cash',
         items,
+        subtotalAmount: discountAmount > 0 ? subtotalAmount : undefined,
+        discountAmount: discountAmount > 0 ? discountAmount : undefined,
         totalAmount,
       });
     },
@@ -740,6 +822,14 @@ function MainApp() {
         return;
       }
 
+      if (scannerTarget === 'pos') {
+        setExternalPosScan((prev) => ({
+          seq: (prev?.seq ?? 0) + 1,
+          scan: result,
+        }));
+        return;
+      }
+
       // Lookup mode: find existing product by barcode, or open create drawer pre-filled
       const match = products.find(
         (p) => p.barcode.trim().toLowerCase() === result.code.trim().toLowerCase()
@@ -758,6 +848,18 @@ function MainApp() {
       }
     },
     [scannerTarget, products, showNotice]
+  );
+
+  const hasAnyBlockingModal = Boolean(
+    scannerOpen ||
+      saleOpen ||
+      drawerOpen ||
+      receiptSettingsOpen ||
+      reprintReceipt ||
+      deleteTargetProduct ||
+      deleteTargetCategory ||
+      deleteTargetSale ||
+      deleteTargetAuthUser
   );
 
   const handleGlobalBarcodeScan = useCallback(
@@ -789,16 +891,24 @@ function MainApp() {
           deleteTargetAuthUser
       );
       if (!anyBlockingModalOpen) {
-        setExternalDashboardSearch((prev) => ({
-          seq: (prev?.seq ?? 0) + 1,
-          code: result.code,
-        }));
+        if (activeView === 'pos') {
+          setExternalPosScan((prev) => ({
+            seq: (prev?.seq ?? 0) + 1,
+            scan: result,
+          }));
+        } else {
+          setExternalDashboardSearch((prev) => ({
+            seq: (prev?.seq ?? 0) + 1,
+            code: result.code,
+          }));
+        }
       }
     },
     [
       scannerOpen,
       saleOpen,
       drawerOpen,
+      activeView,
       receiptSettingsOpen,
       reprintReceipt,
       deleteTargetProduct,
@@ -811,7 +921,7 @@ function MainApp() {
 
   if (!authReady || !accessChecked) {
     return (
-      <div className="min-h-screen bg-[#E6ECF2] dark:bg-[#0B1120] flex items-center justify-center p-6">
+      <div className="min-h-screen bg-[#F0F4F9] dark:bg-[#0B1120] flex items-center justify-center p-6">
         <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
           Sistem yüklənir...
         </div>
@@ -843,6 +953,8 @@ function MainApp() {
       />
 
       <InventoryDashboard
+        activeView={activeView}
+        onChangeActiveView={setActiveView}
         userEmail={user.email || OWNER_EMAIL}
         isAdmin={isAdmin}
         theme={theme}
@@ -851,9 +963,12 @@ function MainApp() {
         customCategories={categories}
         sales={sales}
         authorizedUsers={authorizedUsers}
+        receiptSettings={receiptSettings}
         loading={dataLoading}
         syncNotice={syncNotice}
+        hasBlockingModal={hasAnyBlockingModal}
         externalSearch={externalDashboardSearch}
+        externalPosScan={externalPosScan}
         onSignOut={handleSignOut}
         onOpenNewProduct={() => {
           setEditingProduct(null);
@@ -867,17 +982,26 @@ function MainApp() {
           setDrawerMode('edit');
           setDrawerOpen(true);
         }}
-        onOpenQuickScanner={(tab) => {
-          setScannerTarget('lookup');
+        onOpenQuickScanner={(tab, target = 'lookup') => {
+          setScannerTarget(target);
           setScannerTab(tab);
           setScannerOpen(true);
         }}
         onOpenSale={() => setSaleOpen(true)}
+        onConfirmCheckout={handleConfirmCheckout}
+        onCreateMissingProductFromPos={(scan) => {
+          setEditingProduct(null);
+          setDrawerMode('create');
+          setInitialBarcode(scan ?? null);
+          setDrawerOpen(true);
+        }}
+        onOpenReceiptPreview={(receipt) => setReprintReceipt(receipt)}
         onQuickAdjustQuantity={handleQuickAdjustQuantity}
         onRequestDeleteProduct={(product) => setDeleteTargetProduct(product)}
         onAddCategory={handleAddCategory}
         onDeleteCategory={(cat) => setDeleteTargetCategory(cat)}
         onOpenReceiptSettings={() => setReceiptSettingsOpen(true)}
+        onSaveReceiptSettings={handleSaveReceiptSettings}
         onReprintSale={handleReprintSale}
         onRequestDeleteSale={(sale) => setDeleteTargetSale(sale)}
         onAddAuthorizedUser={handleAddAuthorizedUser}

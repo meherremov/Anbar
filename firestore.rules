@@ -145,6 +145,7 @@ service cloud.firestore {
           'unit',
           'unitPrice',
           'totalAmount',
+          'discountAmount',
           'ownerId',
           'receiptNumber',
           'paymentMethod',
@@ -160,10 +161,11 @@ service cloud.firestore {
         && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 24
         && isValidNonNegativeNumber(data.unitPrice)
         && isValidNonNegativeNumber(data.totalAmount)
+        && isValidOptionalNonNegativeNumber(data, 'discountAmount')
         && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
         && data.ownerId == request.auth.uid
         && isValidOptionalString(data, 'receiptNumber', 40)
-        && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card'])
+        && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card', 'mobile'])
         && isValidOptionalString(data, 'cashierEmail', 160)
         && data.soldAt is timestamp;
     }

@@ -296,7 +296,13 @@ export function SalesReportModule({
                         <div className="text-[11px] font-mono tabular-nums text-slate-400 dark:text-slate-500 mt-0.5">
                           {sale.receiptNumber || 'Tək satış'}
                           {sale.paymentMethod
-                            ? ` · ${sale.paymentMethod === 'card' ? 'Kart' : 'Nağd'}`
+                            ? ` · ${
+                                sale.paymentMethod === 'card'
+                                  ? 'Kart'
+                                  : sale.paymentMethod === 'mobile'
+                                  ? 'Mobil ödəniş'
+                                  : 'Nağd'
+                              }`
                             : ''}
                         </div>
                       </td>

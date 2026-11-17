@@ -56,7 +56,7 @@ function ReceiptPaperContent({
             is58mm ? 'text-sm' : 'text-base'
           }`}
         >
-          {settings.storeName || 'OFİS ANBARI'}
+          {settings.storeName || 'MƏKTƏBLİ'}
         </div>
         {settings.subtitle ? (
           <div className="text-[10px] text-slate-800">{settings.subtitle}</div>
@@ -89,7 +89,11 @@ function ReceiptPaperContent({
         <div className="flex items-center justify-between gap-2">
           <span className="text-slate-700">Ödəniş:</span>
           <span className="font-semibold text-black">
-            {receipt.paymentMethod === 'card' ? 'Bank kartı' : 'Nağd'}
+            {receipt.paymentMethod === 'card'
+              ? 'Bank kartı'
+              : receipt.paymentMethod === 'mobile'
+              ? 'Mobil ödəniş'
+              : 'Nağd'}
           </span>
         </div>
       </div>
@@ -128,6 +132,25 @@ function ReceiptPaperContent({
             {receipt.items.length} çeşid · {totalUnits} vahid
           </span>
         </div>
+
+        {typeof receipt.discountAmount === 'number' && receipt.discountAmount > 0 ? (
+          <>
+            <div className="flex items-center justify-between text-[10px] text-slate-800">
+              <span>Ara cəm:</span>
+              <span>
+                {formatMoney(
+                  typeof receipt.subtotalAmount === 'number'
+                    ? receipt.subtotalAmount
+                    : receipt.totalAmount + receipt.discountAmount
+                )}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-slate-900 font-semibold">
+              <span>Endirim:</span>
+              <span>-{formatMoney(receipt.discountAmount)}</span>
+            </div>
+          </>
+        ) : null}
 
         <div
           className={`flex items-center justify-between font-bold text-black pt-1 ${

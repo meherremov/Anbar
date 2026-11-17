@@ -1,4 +1,4 @@
-import { LogIn, LogOut, Moon, Package, ShieldAlert, Sun } from 'lucide-react';
+import { LogIn, LogOut, Moon, Package, ShieldAlert, ShoppingCart, Sun } from 'lucide-react';
 import { useState } from 'react';
 import stationeryShowcaseImg from '../assets/images/login_stationery_showcase_1794854445504.jpg';
 import { OWNER_EMAIL } from '../firebase';
@@ -26,19 +26,19 @@ export function AuthScreen({
   const [imageError, setImageError] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#E6ECF2] dark:bg-[#0B1120] flex flex-col transition-colors">
+    <div className="min-h-screen bg-[#F0F4F9] dark:bg-[#0B1120] flex flex-col transition-colors">
       <header className="w-full max-w-6xl mx-auto px-6 py-5 flex items-center justify-between gap-8 border-b border-slate-300/60 dark:border-slate-800">
         <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-          <span className="w-7 h-7 rounded-lg bg-slate-900 dark:bg-blue-600/20 dark:border dark:border-blue-500/30 text-white inline-flex items-center justify-center">
-            <Package className="w-4 h-4 text-blue-400" />
+          <span className="w-8 h-8 rounded-lg bg-[#13233F] text-[#F59E0B] inline-flex items-center justify-center">
+            <ShoppingCart className="w-4 h-4" />
           </span>
-          <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
-            Ofis Anbarı
+          <span className="text-lg font-extrabold tracking-tight text-slate-900 dark:text-white">
+            Məktəbli
           </span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <span className="hidden sm:inline text-xs font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
-            Mağaza sahibinin şəxsi sistemi
+            Dəftərxana Sistemi
           </span>
           <button
             type="button"

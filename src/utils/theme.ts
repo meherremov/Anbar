@@ -5,7 +5,7 @@ export type AppTheme = 'dark' | 'light';
 const THEME_STORAGE_KEY = 'ofis_anbari_theme';
 
 export function getInitialTheme(): AppTheme {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'light';
   try {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (saved === 'light' || saved === 'dark') {
@@ -14,7 +14,7 @@ export function getInitialTheme(): AppTheme {
   } catch {
     // Ignore storage access errors
   }
-  return 'dark';
+  return 'light';
 }
 
 export function applyThemeToDocument(theme: AppTheme): void {
