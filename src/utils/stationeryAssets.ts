@@ -1,19 +1,64 @@
-import eraserImg from '../assets/stationery/eraser.png';
-import folderImg from '../assets/stationery/folder.png';
-import glueTapeImg from '../assets/stationery/glue_tape.png';
-import markerImg from '../assets/stationery/marker.png';
-import notebookImg from '../assets/stationery/notebook.png';
-import paintBrushImg from '../assets/stationery/paint_brush.png';
-import paperImg from '../assets/stationery/paper.png';
-import penImg from '../assets/stationery/pen.png';
-import pencilImg from '../assets/stationery/pencil.png';
-import rulerImg from '../assets/stationery/ruler.png';
-import scissorsStaplerImg from '../assets/stationery/scissors_stapler.png';
-import stationeryDefaultImg from '../assets/stationery/stationery_default.png';
+import eraserImg from '../assets/icons/eraser.png';
+import folderImg from '../assets/icons/folder.png';
+import glueTapeImg from '../assets/icons/glue_tape.png';
+import markerImg from '../assets/icons/marker.png';
+import notebookImg from '../assets/icons/notebook.png';
+import paintBrushImg from '../assets/icons/paint_brush.png';
+import paperImg from '../assets/icons/paper.png';
+import penImg from '../assets/icons/pen.png';
+import pencilImg from '../assets/icons/pencil.png';
+import rulerImg from '../assets/icons/ruler.png';
+import scissorsStaplerImg from '../assets/icons/scissors_stapler.png';
+import stationeryDefaultImg from '../assets/icons/stationery_default.png';
+import { STATIONERY_ICON_IDS, type StationeryIconId } from '../types/inventory';
 
 export interface StationeryAsset {
+  id: StationeryIconId;
   src: string;
   alt: string;
+}
+
+export interface StationeryIconOption {
+  id: StationeryIconId;
+  label: string;
+  src: string;
+}
+
+const ICON_IMAGE_MAP: Record<StationeryIconId, string> = {
+  pen: penImg,
+  pencil: pencilImg,
+  notebook: notebookImg,
+  eraser: eraserImg,
+  marker: markerImg,
+  ruler: rulerImg,
+  folder: folderImg,
+  paper: paperImg,
+  glue_tape: glueTapeImg,
+  scissors_stapler: scissorsStaplerImg,
+  paint_brush: paintBrushImg,
+  stationery_default: stationeryDefaultImg,
+};
+
+export const STATIONERY_ICON_OPTIONS: StationeryIconOption[] = [
+  { id: 'pen', label: 'Qələm', src: penImg },
+  { id: 'pencil', label: 'Karandaş', src: pencilImg },
+  { id: 'notebook', label: 'Dəftər', src: notebookImg },
+  { id: 'eraser', label: 'Pozan', src: eraserImg },
+  { id: 'marker', label: 'Marker', src: markerImg },
+  { id: 'ruler', label: 'Xətkeş', src: rulerImg },
+  { id: 'folder', label: 'Qovluq', src: folderImg },
+  { id: 'paper', label: 'Kağız', src: paperImg },
+  { id: 'glue_tape', label: 'Yapışqan', src: glueTapeImg },
+  { id: 'scissors_stapler', label: 'Qayçı', src: scissorsStaplerImg },
+  { id: 'paint_brush', label: 'Boya', src: paintBrushImg },
+  { id: 'stationery_default', label: 'Digər', src: stationeryDefaultImg },
+];
+
+export function isValidStationeryIconId(value: unknown): value is StationeryIconId {
+  return (
+    typeof value === 'string' &&
+    (STATIONERY_ICON_IDS as readonly string[]).includes(value)
+  );
 }
 
 function normalizeAzText(value: string): string {
@@ -33,17 +78,22 @@ function hasAnyKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((kw) => text.includes(kw));
 }
 
-export function getStationeryImage(name: string, category = ''): StationeryAsset {
+export function resolveStationeryIconId(
+  name: string,
+  category = '',
+  explicitIcon?: string
+): StationeryIconId {
+  if (isValidStationeryIconId(explicitIcon)) {
+    return explicitIcon;
+  }
+
   const normName = normalizeAzText(name);
   const normCat = normalizeAzText(category);
   const combined = `${normName} ${normCat}`;
 
-  // 1. Eraser & Correction (check early so "karandas pozani" hits eraser)
   if (hasAnyKeyword(normName, ['pozan', 'silgi', 'korrektor', 'eraser', 'lastik'])) {
-    return { src: eraserImg, alt: `${name || 'Pozan'} illüstrasiyası` };
+    return 'eraser';
   }
-
-  // 2. Marker & Highlighter
   if (
     hasAnyKeyword(normName, [
       'marker',
@@ -54,10 +104,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'tekstmarker',
     ])
   ) {
-    return { src: markerImg, alt: `${name || 'Marker'} illüstrasiyası` };
+    return 'marker';
   }
-
-  // 3. Pencil (check before pen so "qelem ve karandas" prefers name match accurately)
   if (
     hasAnyKeyword(normName, [
       'karandas',
@@ -67,10 +115,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'mexaniki karandas',
     ])
   ) {
-    return { src: pencilImg, alt: `${name || 'Karandaş'} illüstrasiyası` };
+    return 'pencil';
   }
-
-  // 4. Pen
   if (
     hasAnyKeyword(normName, [
       'qelem',
@@ -82,10 +128,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'pen',
     ])
   ) {
-    return { src: penImg, alt: `${name || 'Qələm'} illüstrasiyası` };
+    return 'pen';
   }
-
-  // 5. Notebook / Diary / Notepad
   if (
     hasAnyKeyword(normName, [
       'defter',
@@ -98,10 +142,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'albom',
     ])
   ) {
-    return { src: notebookImg, alt: `${name || 'Dəftər'} illüstrasiyası` };
+    return 'notebook';
   }
-
-  // 6. Ruler / Geometry
   if (
     hasAnyKeyword(normName, [
       'xetkes',
@@ -113,10 +155,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'geometriya',
     ])
   ) {
-    return { src: rulerImg, alt: `${name || 'Xətkeş'} illüstrasiyası` };
+    return 'ruler';
   }
-
-  // 7. Folder / Binder / File
   if (
     hasAnyKeyword(normName, [
       'qovluq',
@@ -128,10 +168,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'folder',
     ])
   ) {
-    return { src: folderImg, alt: `${name || 'Qovluq'} illüstrasiyası` };
+    return 'folder';
   }
-
-  // 8. Glue & Tape
   if (
     hasAnyKeyword(normName, [
       'yapisqan',
@@ -144,10 +182,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'tape',
     ])
   ) {
-    return { src: glueTapeImg, alt: `${name || 'Yapışqan və lent'} illüstrasiyası` };
+    return 'glue_tape';
   }
-
-  // 9. Scissors / Stapler / Clips
   if (
     hasAnyKeyword(normName, [
       'qayci',
@@ -161,13 +197,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'stapler',
     ])
   ) {
-    return {
-      src: scissorsStaplerImg,
-      alt: `${name || 'Qayçı və stepler'} illüstrasiyası`,
-    };
+    return 'scissors_stapler';
   }
-
-  // 10. Paint / Brush / Art supplies
   if (
     hasAnyKeyword(normName, [
       'boya',
@@ -181,10 +212,8 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'brush',
     ])
   ) {
-    return { src: paintBrushImg, alt: `${name || 'Boya və fırça'} illüstrasiyası` };
+    return 'paint_brush';
   }
-
-  // 11. Office Paper / A4 / Sticky notes
   if (
     hasAnyKeyword(normName, [
       'kagiz',
@@ -198,37 +227,44 @@ export function getStationeryImage(name: string, category = ''): StationeryAsset
       'bumaga',
     ])
   ) {
-    return { src: paperImg, alt: `${name || 'Kağız'} illüstrasiyası` };
+    return 'paper';
   }
 
-  // Fallback by Category if specific product name didn't match
   if (hasAnyKeyword(combined, ['yazi', 'qelem', 'karandas'])) {
-    return { src: penImg, alt: `${name || 'Yazı ləvazimatı'} illüstrasiyası` };
+    return 'pen';
   }
   if (hasAnyKeyword(combined, ['defter', 'bloknot'])) {
-    return { src: notebookImg, alt: `${name || 'Dəftər'} illüstrasiyası` };
+    return 'notebook';
   }
   if (hasAnyKeyword(combined, ['kagiz', 'ofis kagiz'])) {
-    return { src: paperImg, alt: `${name || 'Kağız'} illüstrasiyası` };
+    return 'paper';
   }
   if (hasAnyKeyword(combined, ['qovluq', 'arxiv', 'fayl'])) {
-    return { src: folderImg, alt: `${name || 'Qovluq'} illüstrasiyası` };
+    return 'folder';
   }
   if (hasAnyKeyword(combined, ['yapisqan', 'bant', 'kley'])) {
-    return { src: glueTapeImg, alt: `${name || 'Yapışqan'} illüstrasiyası` };
+    return 'glue_tape';
   }
   if (hasAnyKeyword(combined, ['resm', 'boya', 'hobbi'])) {
-    return { src: paintBrushImg, alt: `${name || 'Rəsm ləvazimatı'} illüstrasiyası` };
+    return 'paint_brush';
   }
   if (hasAnyKeyword(combined, ['masa', 'ofis'])) {
-    return {
-      src: scissorsStaplerImg,
-      alt: `${name || 'Ofis ləvazimatı'} illüstrasiyası`,
-    };
+    return 'scissors_stapler';
   }
 
+  return 'stationery_default';
+}
+
+export function getStationeryImage(
+  name: string,
+  category = '',
+  explicitIcon?: string
+): StationeryAsset {
+  const id = resolveStationeryIconId(name, category, explicitIcon);
+  const option = STATIONERY_ICON_OPTIONS.find((item) => item.id === id);
   return {
-    src: stationeryDefaultImg,
-    alt: `${name || 'Dəftərxana ləvazimatı'} illüstrasiyası`,
+    id,
+    src: ICON_IMAGE_MAP[id],
+    alt: `${name || option?.label || 'Dəftərxana ləvazimatı'} ikonu`,
   };
 }

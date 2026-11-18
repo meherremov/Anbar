@@ -1,4 +1,9 @@
-import type { ReceiptData, ReceiptSettings, ThermalPaperWidth } from '../types/inventory';
+import {
+  formatPaymentMethodLabel,
+  type ReceiptData,
+  type ReceiptSettings,
+  type ThermalPaperWidth,
+} from '../types/inventory';
 
 interface SerialPortLike {
   open(options: { baudRate: number }): Promise<void>;
@@ -136,17 +141,22 @@ export function renderReceiptToCanvas(
   if (settings.taxId) y += smallStep;
   y += 18; // dashed divider
 
-  // Metadata (4 rows)
-  y += smallStep * 4 + 18;
+  // Metadata (3 rows when C2C is hidden from receipt, 4 otherwise)
+  const metadataRowCount = receipt.paymentMethod === 'c2c' ? 3 : 4;
+  y += smallStep * metadataRowCount + 18;
 
   // Items header
   y += smallStep + 10;
 
   mctx.font = `600 ${baseFontSize}px ${sansFamily}`;
   for (let i = 0; i < receipt.items.length; i++) {
-    const label = `${i + 1}. ${receipt.items[i].productName}`;
+    const item = receipt.items[i];
+    const label = `${i + 1}. ${item.productName}`;
     y += wrapText(mctx, label, contentWidth).length * lineStep;
     y += smallStep + 10;
+    if (typeof item.discountAmount === 'number' && item.discountAmount > 0) {
+      y += smallStep;
+    }
   }
   y += 14; // dashed divider
 
@@ -239,13 +249,9 @@ export function renderReceiptToCanvas(
   drawKeyVal('Çek №:', receipt.receiptNumber, true);
   drawKeyVal('Tarix:', formatDateTime(receipt.issuedAt));
   drawKeyVal('Kassir:', receipt.cashierLabel);
-  const paymentLabel =
-    receipt.paymentMethod === 'card'
-      ? 'Bank kartı'
-      : receipt.paymentMethod === 'mobile'
-      ? 'Mobil ödəniş'
-      : 'Nağd';
-  drawKeyVal('Ödəniş:', paymentLabel, true);
+  if (receipt.paymentMethod !== 'c2c') {
+    drawKeyVal('Ödəniş:', formatPaymentMethodLabel(receipt.paymentMethod), true);
+  }
 
   curY += 8;
   drawDashedLine(curY);
@@ -282,6 +288,15 @@ export function renderReceiptToCanvas(
     ctx.font = `700 ${smallFontSize}px ${fontFamily}`;
     ctx.fillText(formatMoney(item.lineTotal), width - padX, curY);
     curY += smallStep + 10;
+
+    if (typeof item.discountAmount === 'number' && item.discountAmount > 0) {
+      ctx.textAlign = 'left';
+      ctx.font = `400 ${smallFontSize}px ${fontFamily}`;
+      ctx.fillText('  Məhsul endirimi:', padX, curY);
+      ctx.textAlign = 'right';
+      ctx.fillText(`-${formatMoney(item.discountAmount)}`, width - padX, curY);
+      curY += smallStep;
+    }
   }
 
   curY += 4;

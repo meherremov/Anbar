@@ -1,5 +1,9 @@
 import { createPortal } from 'react-dom';
-import type { ReceiptData, ReceiptSettings } from '../types/inventory';
+import {
+  formatPaymentMethodLabel,
+  type ReceiptData,
+  type ReceiptSettings,
+} from '../types/inventory';
 import { BarcodeGraphic } from './BarcodeGraphic';
 
 interface ThermalReceiptProps {
@@ -86,16 +90,14 @@ function ReceiptPaperContent({
           <span className="text-slate-700">Kassir:</span>
           <span className="text-black truncate max-w-[160px]">{receipt.cashierLabel}</span>
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-slate-700">Ödəniş:</span>
-          <span className="font-semibold text-black">
-            {receipt.paymentMethod === 'card'
-              ? 'Bank kartı'
-              : receipt.paymentMethod === 'mobile'
-              ? 'Mobil ödəniş'
-              : 'Nağd'}
-          </span>
-        </div>
+        {receipt.paymentMethod !== 'c2c' ? (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-700">Ödəniş:</span>
+            <span className="font-semibold text-black">
+              {formatPaymentMethodLabel(receipt.paymentMethod)}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Itemized Products */}
@@ -119,6 +121,12 @@ function ReceiptPaperContent({
                   {formatMoney(item.lineTotal)}
                 </span>
               </div>
+              {typeof item.discountAmount === 'number' && item.discountAmount > 0 ? (
+                <div className="flex items-center justify-between gap-2 text-[10px] pl-3 text-slate-700">
+                  <span>Məhsul endirimi:</span>
+                  <span>-{formatMoney(item.discountAmount)}</span>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

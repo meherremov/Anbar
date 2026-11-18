@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowLeftRight,
   Banknote,
   Check,
   CheckCircle2,
@@ -115,6 +116,7 @@ export function PosWorkspace({
   onReprintLatestSale,
 }: PosWorkspaceProps) {
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
+  const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
   const [barcodeInput, setBarcodeInput] = useState<string>('');
   const [suggestionsDismissed, setSuggestionsDismissed] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
@@ -189,6 +191,7 @@ export function PosWorkspace({
         }
         const updated = [...prev];
         updated[idx] = {
+          ...prev[idx],
           product,
           quantity: Math.round((curQty + 1) * 100) / 100,
         };
@@ -253,16 +256,32 @@ export function PosWorkspace({
     return Math.round(sum * 100) / 100;
   }, [cart]);
 
+  const itemsDiscountTotal = useMemo(() => {
+    const sum = cart.reduce((acc, item) => {
+      const gross = Math.round(item.quantity * item.product.salePrice * 100) / 100;
+      const itemDisc =
+        typeof item.discountAmount === 'number' && item.discountAmount > 0
+          ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+          : 0;
+      return acc + itemDisc;
+    }, 0);
+    return Math.round(sum * 100) / 100;
+  }, [cart]);
+
+  const netAfterItemDiscounts = useMemo(() => {
+    return Math.max(0, Math.round((subtotalAmount - itemsDiscountTotal) * 100) / 100);
+  }, [subtotalAmount, itemsDiscountTotal]);
+
   const discountAmount = useMemo(() => {
     if (!discountInput.trim()) return 0;
     const val = Number(discountInput);
     if (Number.isNaN(val) || val <= 0) return 0;
-    return Math.min(subtotalAmount, Math.round(val * 100) / 100);
-  }, [discountInput, subtotalAmount]);
+    return Math.min(netAfterItemDiscounts, Math.round(val * 100) / 100);
+  }, [discountInput, netAfterItemDiscounts]);
 
   const payableTotal = useMemo(() => {
-    return Math.max(0, Math.round((subtotalAmount - discountAmount) * 100) / 100);
-  }, [subtotalAmount, discountAmount]);
+    return Math.max(0, Math.round((netAfterItemDiscounts - discountAmount) * 100) / 100);
+  }, [netAfterItemDiscounts, discountAmount]);
 
   const parsedCashReceived = useMemo(() => {
     if (paymentMethod !== 'cash' || !cashReceivedInput.trim()) return undefined;
@@ -321,17 +340,102 @@ export function PosWorkspace({
           item.product.quantity,
           Math.max(0.01, Math.round(nextQtyRaw * 100) / 100)
         );
-        return { ...item, quantity: clamped };
+        const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
+        const clampedDiscount =
+          typeof item.discountAmount === 'number' && item.discountAmount > 0
+            ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+            : undefined;
+        return {
+          ...item,
+          quantity: clamped,
+          discountAmount: clampedDiscount && clampedDiscount > 0 ? clampedDiscount : undefined,
+        };
       })
     );
   };
 
+  const applyItemDiscount = (productId: string) => {
+    const targetItem = cart.find((i) => i.product.id === productId);
+    if (!targetItem) return;
+
+    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
+    if (!rawStr) {
+      setCart((prev) =>
+        prev.map((item) =>
+          item.product.id === productId ? { ...item, discountAmount: undefined } : item
+        )
+      );
+      setStatusBanner({
+        tone: 'ok',
+        text: `"${targetItem.product.name}" üzrə məhsul endirimi sıfırlandı.`,
+      });
+      return;
+    }
+
+    const val = Number(rawStr);
+    if (Number.isNaN(val) || val < 0) {
+      setStatusBanner({
+        tone: 'warn',
+        text: 'Endirim məbləği 0 və ya müsbət rəqəm olmalıdır.',
+      });
+      return;
+    }
+
+    const applied = Math.min(gross, Math.round(val * 100) / 100);
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId
+          ? { ...item, discountAmount: applied > 0 ? applied : undefined }
+          : item
+      )
+    );
+    setItemDiscountDrafts((prev) => ({
+      ...prev,
+      [productId]: applied > 0 ? applied.toFixed(2) : '',
+    }));
+    setStatusBanner({
+      tone: 'ok',
+      text:
+        applied > 0
+          ? `"${targetItem.product.name}" üçün ${applied.toFixed(2)} AZN endirim tətbiq edildi.`
+          : `"${targetItem.product.name}" üzrə məhsul endirimi sıfırlandı.`,
+    });
+  };
+
+  const clearItemDiscount = (productId: string) => {
+    const targetItem = cart.find((i) => i.product.id === productId);
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId ? { ...item, discountAmount: undefined } : item
+      )
+    );
+    setItemDiscountDrafts((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    if (targetItem) {
+      setStatusBanner({
+        tone: 'ok',
+        text: `"${targetItem.product.name}" üzrə məhsul endirimi ləğv edildi.`,
+      });
+    }
+  };
+
   const removeCartItem = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setItemDiscountDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
   };
 
   const handleClearCart = useCallback(() => {
     setCart([]);
+    setItemDiscountDrafts({});
     setDiscountInput('');
     setCashReceivedInput('');
     setBarcodeInput('');
@@ -399,6 +503,7 @@ export function PosWorkspace({
       });
       setLastReceipt(receipt);
       setCart([]);
+      setItemDiscountDrafts({});
       setDiscountInput('');
       setCashReceivedInput('');
       setBarcodeInput('');
@@ -463,6 +568,12 @@ export function PosWorkspace({
       } else if (e.key === 'F5') {
         e.preventDefault();
         if (!pickerOpen) handleClearCart();
+      } else if (e.key === 'F7') {
+        e.preventDefault();
+        if (!pickerOpen) {
+          setPaymentMethod('c2c');
+          setCashReceivedInput('');
+        }
       } else if (e.key === 'F8') {
         e.preventDefault();
         if (!pickerOpen) handlePrintAction();
@@ -564,6 +675,7 @@ export function PosWorkspace({
                     <ProductThumb
                       name={item.name}
                       category={item.category}
+                      icon={item.icon}
                       sizeClassName="w-9 h-9"
                       imgClassName="w-7 h-7"
                     />
@@ -634,30 +746,91 @@ export function PosWorkspace({
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {cart.map((item, idx) => {
-                      const lineTotal =
+                      const grossLineTotal =
                         Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                      const appliedItemDiscount =
+                        typeof item.discountAmount === 'number' && item.discountAmount > 0
+                          ? Math.min(grossLineTotal, item.discountAmount)
+                          : 0;
+                      const netLineTotal = Math.max(
+                        0,
+                        Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
+                      );
+                      const draftValue =
+                        itemDiscountDrafts[item.product.id] ??
+                        (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
                       return (
                         <tr
                           key={item.product.id}
-                          className="hover:bg-blue-50/35 dark:hover:bg-slate-800/40 transition-colors"
+                          className="hover:bg-blue-50/35 dark:hover:bg-slate-800/40 transition-colors align-top"
                         >
                           <td className="py-3.5 px-4 font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
                             {idx + 1}
                           </td>
                           <td className="py-3.5 px-4">
-                            <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex items-start gap-3 min-w-0">
                               <ProductThumb
                                 name={item.product.name}
                                 category={item.product.category}
+                                icon={item.product.icon}
                                 sizeClassName="w-10 h-10"
                                 imgClassName="w-8 h-8"
                               />
-                              <div className="min-w-0">
-                                <div className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[260px]">
-                                  {item.product.name}
+                              <div className="min-w-0 flex-1 space-y-2">
+                                <div>
+                                  <div className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-[260px]">
+                                    {item.product.name}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                                    <span>(BAR: {item.product.barcode})</span>
+                                    {appliedItemDiscount > 0 ? (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-sans font-semibold text-[11px]">
+                                        -{appliedItemDiscount.toFixed(2)} AZN endirim
+                                        <button
+                                          type="button"
+                                          onClick={() => clearItemDiscount(item.product.id)}
+                                          className="hover:text-red-600 dark:hover:text-red-400 cursor-pointer"
+                                          aria-label="Məhsul endirimini sil"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                                  (BAR: {item.product.barcode})
+
+                                {/* Per-Item Discount Box & Button */}
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={grossLineTotal}
+                                    step="0.01"
+                                    value={draftValue}
+                                    onChange={(e) =>
+                                      setItemDiscountDrafts((prev) => ({
+                                        ...prev,
+                                        [item.product.id]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        applyItemDiscount(item.product.id);
+                                      }
+                                    }}
+                                    placeholder="Endirim (AZN)"
+                                    aria-label={`${item.product.name} üçün endirim məbləği`}
+                                    className="w-28 px-2 py-1 text-xs font-mono tabular-nums rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => applyItemDiscount(item.product.id)}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-[#1976F3] dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 rounded-md whitespace-nowrap transition-colors cursor-pointer"
+                                  >
+                                    <Tag className="w-3 h-3" />
+                                    <span>Endirim tətbiq et</span>
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -704,7 +877,18 @@ export function PosWorkspace({
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-center font-bold text-slate-900 dark:text-white tabular-nums">
-                            {lineTotal.toFixed(2)}
+                            {appliedItemDiscount > 0 ? (
+                              <div>
+                                <div className="text-[11px] font-normal text-slate-400 line-through">
+                                  {grossLineTotal.toFixed(2)}
+                                </div>
+                                <div className="text-emerald-700 dark:text-emerald-400">
+                                  {netLineTotal.toFixed(2)}
+                                </div>
+                              </div>
+                            ) : (
+                              netLineTotal.toFixed(2)
+                            )}
                           </td>
                           <td className="py-3.5 px-4 text-center">
                             <button
@@ -726,8 +910,19 @@ export function PosWorkspace({
               {/* Mobile POS Cart Cards */}
               <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
                 {cart.map((item, idx) => {
-                  const lineTotal =
+                  const grossLineTotal =
                     Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                  const appliedItemDiscount =
+                    typeof item.discountAmount === 'number' && item.discountAmount > 0
+                      ? Math.min(grossLineTotal, item.discountAmount)
+                      : 0;
+                  const netLineTotal = Math.max(
+                    0,
+                    Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
+                  );
+                  const draftValue =
+                    itemDiscountDrafts[item.product.id] ??
+                    (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
                   return (
                     <div key={item.product.id} className="p-4 space-y-2.5">
                       <div className="flex items-start justify-between gap-3">
@@ -735,6 +930,7 @@ export function PosWorkspace({
                           <ProductThumb
                             name={item.product.name}
                             category={item.product.category}
+                            icon={item.product.icon}
                             sizeClassName="w-9 h-9"
                             imgClassName="w-7 h-7"
                           />
@@ -756,6 +952,51 @@ export function PosWorkspace({
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
+
+                      {/* Mobile Per-Item Discount Box & Button */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          max={grossLineTotal}
+                          step="0.01"
+                          value={draftValue}
+                          onChange={(e) =>
+                            setItemDiscountDrafts((prev) => ({
+                              ...prev,
+                              [item.product.id]: e.target.value,
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              applyItemDiscount(item.product.id);
+                            }
+                          }}
+                          placeholder="Endirim (AZN)"
+                          aria-label={`${item.product.name} üçün endirim məbləği`}
+                          className="w-28 px-2.5 py-1.5 text-xs font-mono tabular-nums rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => applyItemDiscount(item.product.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#1976F3] dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 rounded-md whitespace-nowrap cursor-pointer"
+                        >
+                          <Tag className="w-3.5 h-3.5" />
+                          <span>Endirim tətbiq et</span>
+                        </button>
+                        {appliedItemDiscount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => clearItemDiscount(item.product.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded-md cursor-pointer"
+                          >
+                            <span>-{appliedItemDiscount.toFixed(2)} AZN</span>
+                            <X className="w-3 h-3" />
+                          </button>
+                        ) : null}
+                      </div>
+
                       <div className="flex items-center justify-between">
                         <div className="inline-flex items-center border border-slate-200 dark:border-slate-700 rounded-lg bg-[#F8FAFC] dark:bg-slate-900">
                           <button
@@ -779,7 +1020,18 @@ export function PosWorkspace({
                           </button>
                         </div>
                         <span className="text-sm font-bold text-slate-900 dark:text-white tabular-nums">
-                          {lineTotal.toFixed(2)} AZN
+                          {appliedItemDiscount > 0 ? (
+                            <span>
+                              <span className="text-xs font-normal text-slate-400 line-through mr-1.5">
+                                {grossLineTotal.toFixed(2)}
+                              </span>
+                              <span className="text-emerald-700 dark:text-emerald-400">
+                                {netLineTotal.toFixed(2)} AZN
+                              </span>
+                            </span>
+                          ) : (
+                            `${netLineTotal.toFixed(2)} AZN`
+                          )}
                         </span>
                       </div>
                     </div>
@@ -885,20 +1137,31 @@ export function PosWorkspace({
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+            {itemsDiscountTotal > 0 ? (
+              <div className="px-4 py-2.5 flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-slate-600 dark:text-slate-400">
+                  Məhsul endirimləri:
+                </span>
+                <span className="font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-400">
+                  -{itemsDiscountTotal.toFixed(2)} AZN
+                </span>
+              </div>
+            ) : null}
+
             <div className="px-4 py-3 flex items-center justify-between gap-2">
               <label
                 htmlFor="pos-discount-input"
                 className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300"
               >
                 <Tag className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                <span>Endirim:</span>
+                <span>{itemsDiscountTotal > 0 ? 'Əlavə endirim:' : 'Endirim:'}</span>
               </label>
               <div className="flex items-center gap-1.5">
                 <input
                   id="pos-discount-input"
                   type="number"
                   min="0"
-                  max={subtotalAmount}
+                  max={netAfterItemDiscounts}
                   step="0.01"
                   value={discountInput}
                   onChange={(e) => setDiscountInput(e.target.value)}
@@ -928,11 +1191,11 @@ export function PosWorkspace({
             <span>Ödəniş Növü</span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => setPaymentMethod('cash')}
-              className={`rounded-xl border py-3 px-2 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
+              className={`rounded-xl border py-2.5 px-2.5 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
                 paymentMethod === 'cash'
                   ? 'bg-[#1976F3] text-white border-[#1976F3] shadow-xs'
                   : 'bg-[#F8FAFC] dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -954,10 +1217,35 @@ export function PosWorkspace({
             <button
               type="button"
               onClick={() => {
+                setPaymentMethod('c2c');
+                setCashReceivedInput('');
+              }}
+              className={`rounded-xl border py-2.5 px-2.5 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
+                paymentMethod === 'c2c'
+                  ? 'bg-[#1976F3] text-white border-[#1976F3] shadow-xs'
+                  : 'bg-[#F8FAFC] dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <ArrowLeftRight className="w-5 h-5" />
+              <span className="text-xs font-bold leading-tight">C2C</span>
+              <span
+                className={`text-[11px] font-medium leading-tight ${
+                  paymentMethod === 'c2c'
+                    ? 'text-blue-100'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                Kartdan karta (F7)
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setPaymentMethod('card');
                 setCashReceivedInput('');
               }}
-              className={`rounded-xl border py-3 px-2 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
+              className={`rounded-xl border py-2.5 px-2.5 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
                 paymentMethod === 'card'
                   ? 'bg-[#1976F3] text-white border-[#1976F3] shadow-xs'
                   : 'bg-[#F8FAFC] dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -982,7 +1270,7 @@ export function PosWorkspace({
                 setPaymentMethod('mobile');
                 setCashReceivedInput('');
               }}
-              className={`rounded-xl border py-3 px-2 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
+              className={`rounded-xl border py-2.5 px-2.5 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
                 paymentMethod === 'mobile'
                   ? 'bg-[#1976F3] text-white border-[#1976F3] shadow-xs'
                   : 'bg-[#F8FAFC] dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -1129,6 +1417,7 @@ export function PosWorkspace({
                         <ProductThumb
                           name={p.name}
                           category={p.category}
+                          icon={p.icon}
                           sizeClassName="w-10 h-10"
                           imgClassName="w-8 h-8"
                         />

@@ -13,6 +13,7 @@ import {
   Search,
   Settings2,
   ShoppingCart,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -101,6 +102,7 @@ export function SaleModal({
 }: SaleModalProps) {
   const [inputMode, setInputMode] = useState<InputMode>('camera');
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
+  const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
   const [autoPrintAfterSale, setAutoPrintAfterSale] = useState<boolean>(() => {
@@ -161,6 +163,7 @@ export function SaleModal({
 
   const resetForNewSale = useCallback(() => {
     setCart([]);
+    setItemDiscountDrafts({});
     setPaymentMethod('cash');
     setCashReceivedInput('');
     setManualCode('');
@@ -209,6 +212,7 @@ export function SaleModal({
         }
         const updated = [...prev];
         updated[existingIdx] = {
+          ...prev[existingIdx],
           product,
           quantity: Math.round((currentQty + 1) * 100) / 100,
         };
@@ -369,7 +373,12 @@ export function SaleModal({
     let totalAmount = 0;
     let totalUnits = 0;
     for (const item of cart) {
-      totalAmount += item.quantity * item.product.salePrice;
+      const gross = Math.round(item.quantity * item.product.salePrice * 100) / 100;
+      const disc =
+        typeof item.discountAmount === 'number' && item.discountAmount > 0
+          ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+          : 0;
+      totalAmount += Math.max(0, gross - disc);
       totalUnits += item.quantity;
     }
     return {
@@ -447,14 +456,77 @@ export function SaleModal({
           item.product.quantity,
           Math.max(0.01, Math.round(nextQtyRaw * 100) / 100)
         );
-        return { ...item, quantity: clamped };
+        const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
+        const clampedDiscount =
+          typeof item.discountAmount === 'number' && item.discountAmount > 0
+            ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+            : undefined;
+        return {
+          ...item,
+          quantity: clamped,
+          discountAmount: clampedDiscount && clampedDiscount > 0 ? clampedDiscount : undefined,
+        };
       })
     );
     setSaleError(null);
   };
 
+  const applyItemDiscount = (productId: string) => {
+    const targetItem = cart.find((i) => i.product.id === productId);
+    if (!targetItem) return;
+    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
+    if (!rawStr) {
+      setCart((prev) =>
+        prev.map((item) =>
+          item.product.id === productId ? { ...item, discountAmount: undefined } : item
+        )
+      );
+      setSaleError(null);
+      return;
+    }
+    const val = Number(rawStr);
+    if (Number.isNaN(val) || val < 0) {
+      setSaleError('Endirim məbləği 0 və ya müsbət rəqəm olmalıdır.');
+      return;
+    }
+    const applied = Math.min(gross, Math.round(val * 100) / 100);
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId
+          ? { ...item, discountAmount: applied > 0 ? applied : undefined }
+          : item
+      )
+    );
+    setItemDiscountDrafts((prev) => ({
+      ...prev,
+      [productId]: applied > 0 ? applied.toFixed(2) : '',
+    }));
+    setSaleError(null);
+  };
+
+  const clearItemDiscount = (productId: string) => {
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId ? { ...item, discountAmount: undefined } : item
+      )
+    );
+    setItemDiscountDrafts((prev) => {
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setSaleError(null);
+  };
+
   const removeCartItem = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setItemDiscountDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
     setSaleError(null);
   };
 
@@ -830,6 +902,7 @@ export function SaleModal({
                             <ProductThumb
                               name={p.name}
                               category={p.category}
+                              icon={p.icon}
                               sizeClassName="w-8 h-8"
                               imgClassName="w-6 h-6"
                             />
@@ -895,8 +968,19 @@ export function SaleModal({
                 ) : (
                   <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto">
                     {cart.map((item) => {
-                      const lineTotal =
+                      const grossLineTotal =
                         Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                      const appliedItemDiscount =
+                        typeof item.discountAmount === 'number' && item.discountAmount > 0
+                          ? Math.min(grossLineTotal, item.discountAmount)
+                          : 0;
+                      const netLineTotal = Math.max(
+                        0,
+                        Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
+                      );
+                      const draftValue =
+                        itemDiscountDrafts[item.product.id] ??
+                        (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
                       return (
                         <div key={item.product.id} className="p-3 space-y-2">
                           <div className="flex items-start justify-between gap-2">
@@ -904,6 +988,7 @@ export function SaleModal({
                               <ProductThumb
                                 name={item.product.name}
                                 category={item.product.category}
+                                icon={item.product.icon}
                                 sizeClassName="w-8 h-8"
                                 imgClassName="w-6 h-6"
                               />
@@ -925,6 +1010,49 @@ export function SaleModal({
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              max={grossLineTotal}
+                              step="0.01"
+                              value={draftValue}
+                              onChange={(e) =>
+                                setItemDiscountDrafts((prev) => ({
+                                  ...prev,
+                                  [item.product.id]: e.target.value,
+                                }))
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  applyItemDiscount(item.product.id);
+                                }
+                              }}
+                              placeholder="Endirim (₼)"
+                              aria-label={`${item.product.name} üçün endirim məbləği`}
+                              className="w-24 px-2 py-1 text-xs font-mono tabular-nums rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => applyItemDiscount(item.product.id)}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 rounded-md whitespace-nowrap cursor-pointer"
+                            >
+                              <Tag className="w-3 h-3" />
+                              <span>Endirim tətbiq et</span>
+                            </button>
+                            {appliedItemDiscount > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => clearItemDiscount(item.product.id)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded cursor-pointer"
+                              >
+                                <span>-{appliedItemDiscount.toFixed(2)} ₼</span>
+                                <X className="w-3 h-3" />
+                              </button>
+                            ) : null}
                           </div>
 
                           <div className="flex items-center justify-between gap-2">
@@ -966,7 +1094,18 @@ export function SaleModal({
                             </div>
 
                             <div className="font-mono tabular-nums text-xs font-bold text-slate-900 dark:text-slate-100">
-                              {lineTotal.toFixed(2)} ₼
+                              {appliedItemDiscount > 0 ? (
+                                <span>
+                                  <span className="font-normal text-slate-400 line-through mr-1">
+                                    {grossLineTotal.toFixed(2)}
+                                  </span>
+                                  <span className="text-emerald-700 dark:text-emerald-400">
+                                    {netLineTotal.toFixed(2)} ₼
+                                  </span>
+                                </span>
+                              ) : (
+                                `${netLineTotal.toFixed(2)} ₼`
+                              )}
                             </div>
                           </div>
                         </div>
@@ -978,11 +1117,11 @@ export function SaleModal({
 
               {/* Payment & Checkout Footer */}
               <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
-                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('cash')}
-                    className={`py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                    className={`py-1.5 px-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
                       paymentMethod === 'cash'
                         ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -993,10 +1132,24 @@ export function SaleModal({
                   <button
                     type="button"
                     onClick={() => {
+                      setPaymentMethod('c2c');
+                      setCashReceivedInput('');
+                    }}
+                    className={`py-1.5 px-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                      paymentMethod === 'c2c'
+                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    C2C (Kartdan karta)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setPaymentMethod('card');
                       setCashReceivedInput('');
                     }}
-                    className={`py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                    className={`py-1.5 px-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
                       paymentMethod === 'card'
                         ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -1010,7 +1163,7 @@ export function SaleModal({
                       setPaymentMethod('mobile');
                       setCashReceivedInput('');
                     }}
-                    className={`py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                    className={`py-1.5 px-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
                       paymentMethod === 'mobile'
                         ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'

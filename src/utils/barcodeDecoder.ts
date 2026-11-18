@@ -5,7 +5,12 @@ import {
   FIELD_LIMITS,
   type BarcodeScanResult,
   type ProductFormValues,
+  type StationeryIconId,
 } from '../types/inventory';
+import {
+  isValidStationeryIconId,
+  resolveStationeryIconId,
+} from './stationeryAssets';
 
 const SUPPORTED_FORMATS = [
   BarcodeFormat.EAN_13,
@@ -222,6 +227,7 @@ export interface ValidatedProductPayload {
   minStock?: number;
   shelfLocation?: string;
   notes?: string;
+  icon: StationeryIconId;
 }
 
 export function validateAndSanitizeProduct(
@@ -268,6 +274,10 @@ export function validateAndSanitizeProduct(
     return { ok: false, error: 'Satış qiyməti düzgün daxil edilməyib.' };
   }
 
+  const resolvedIcon: StationeryIconId = isValidStationeryIconId(values.icon)
+    ? values.icon
+    : resolveStationeryIconId(name, category);
+
   const payload: ValidatedProductPayload = {
     name,
     barcode,
@@ -276,6 +286,7 @@ export function validateAndSanitizeProduct(
     quantity: Math.round(quantity * 100) / 100,
     unit,
     salePrice: Math.round(salePrice * 100) / 100,
+    icon: resolvedIcon,
   };
 
   const brand = values.brand.trim().slice(0, FIELD_LIMITS.BRAND_MAX);

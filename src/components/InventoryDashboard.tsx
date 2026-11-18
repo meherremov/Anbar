@@ -50,6 +50,7 @@ import {
   type ReceiptSettings,
   type SaleRecord,
   type SortOption,
+  type StationeryIconId,
   type StockFilter,
 } from '../types/inventory';
 import type { AppTheme } from '../utils/theme';
@@ -247,6 +248,16 @@ export function InventoryDashboard({
       counts.set(p.category, (counts.get(p.category) || 0) + 1);
     }
     return counts;
+  }, [products]);
+
+  const productIconMap = useMemo(() => {
+    const map = new Map<string, StationeryIconId>();
+    for (const p of products) {
+      if (p.icon) {
+        map.set(p.id, p.icon);
+      }
+    }
+    return map;
   }, [products]);
 
   const metrics = useMemo(() => {
@@ -876,6 +887,7 @@ export function InventoryDashboard({
           ) : activeView === 'sales' ? (
             <SalesReportModule
               sales={sales}
+              productIconMap={productIconMap}
               loading={loading}
               onOpenSaleModal={() => handleNavSelect('pos')}
               onOpenReceiptSettings={onOpenReceiptSettings}
@@ -1065,6 +1077,7 @@ export function InventoryDashboard({
 
               <SalesReportModule
                 sales={sales}
+                productIconMap={productIconMap}
                 loading={loading}
                 compact
                 onOpenFullReport={() => handleNavSelect('sales', 'all')}
@@ -1347,6 +1360,7 @@ export function InventoryDashboard({
                                       <ProductThumb
                                         name={product.name}
                                         category={product.category}
+                                        icon={product.icon}
                                         sizeClassName="w-10 h-10"
                                         imgClassName="w-8 h-8"
                                       />
@@ -1514,6 +1528,7 @@ export function InventoryDashboard({
                                 <ProductThumb
                                   name={product.name}
                                   category={product.category}
+                                  icon={product.icon}
                                   sizeClassName="w-10 h-10"
                                   imgClassName="w-8 h-8"
                                 />

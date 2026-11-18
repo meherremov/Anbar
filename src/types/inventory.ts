@@ -9,8 +9,26 @@ export const FIELD_LIMITS = {
   UNIT_MAX: 24,
   SHELF_MAX: 64,
   NOTES_MAX: 500,
+  ICON_MAX: 40,
   NUMERIC_MAX: 100000000,
 } as const;
+
+export const STATIONERY_ICON_IDS = [
+  'pen',
+  'pencil',
+  'notebook',
+  'eraser',
+  'marker',
+  'ruler',
+  'folder',
+  'paper',
+  'glue_tape',
+  'scissors_stapler',
+  'paint_brush',
+  'stationery_default',
+] as const;
+
+export type StationeryIconId = (typeof STATIONERY_ICON_IDS)[number];
 
 // Synchronized verbatim with firebase-blueprint.json & firestore.rules
 export const BARCODE_PATTERN = /^[A-Za-z0-9_\-./+:=?&%# ]+$/;
@@ -48,6 +66,7 @@ export interface Product {
   minStock?: number;
   shelfLocation?: string;
   notes?: string;
+  icon?: StationeryIconId;
   ownerId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
@@ -66,6 +85,7 @@ export interface ProductFormValues {
   minStock: string;
   shelfLocation: string;
   notes: string;
+  icon: string;
 }
 
 export interface CategoryItem {
@@ -75,8 +95,22 @@ export interface CategoryItem {
   createdAt: Timestamp | null;
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'mobile';
+export type PaymentMethod = 'cash' | 'card' | 'c2c' | 'mobile';
 export type ThermalPaperWidth = '80mm' | '58mm';
+
+export function formatPaymentMethodLabel(method?: PaymentMethod): string {
+  switch (method) {
+    case 'card':
+      return 'Bank kartı';
+    case 'c2c':
+      return 'C2C (Kartdan karta)';
+    case 'mobile':
+      return 'Mobil ödəniş';
+    case 'cash':
+    default:
+      return 'Nağd';
+  }
+}
 
 export interface SaleRecord {
   id: string;
@@ -129,6 +163,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
 export interface CheckoutCartItem {
   product: Product;
   quantity: number;
+  discountAmount?: number;
 }
 
 export interface ReceiptLineItem {
@@ -138,6 +173,7 @@ export interface ReceiptLineItem {
   quantity: number;
   unit: string;
   unitPrice: number;
+  discountAmount?: number;
   lineTotal: number;
 }
 

@@ -9,11 +9,16 @@ import {
   X,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type { SaleRecord } from '../types/inventory';
+import {
+  formatPaymentMethodLabel,
+  type SaleRecord,
+  type StationeryIconId,
+} from '../types/inventory';
 import { ProductThumb } from './ProductThumb';
 
 interface SalesReportModuleProps {
   sales: SaleRecord[];
+  productIconMap?: Map<string, StationeryIconId>;
   loading: boolean;
   compact?: boolean;
   onOpenFullReport?: () => void;
@@ -48,6 +53,7 @@ function formatDateTime(ts: SaleRecord['soldAt']): string {
 
 export function SalesReportModule({
   sales,
+  productIconMap,
   loading,
   compact = false,
   onOpenFullReport,
@@ -297,13 +303,7 @@ export function SalesReportModule({
                         <div className="text-[11px] font-mono tabular-nums text-slate-400 dark:text-slate-500 mt-0.5">
                           {sale.receiptNumber || 'Tək satış'}
                           {sale.paymentMethod
-                            ? ` · ${
-                                sale.paymentMethod === 'card'
-                                  ? 'Kart'
-                                  : sale.paymentMethod === 'mobile'
-                                  ? 'Mobil ödəniş'
-                                  : 'Nağd'
-                              }`
+                            ? ` · ${formatPaymentMethodLabel(sale.paymentMethod)}`
                             : ''}
                         </div>
                       </td>
@@ -312,6 +312,7 @@ export function SalesReportModule({
                           <ProductThumb
                             name={sale.productName}
                             category={sale.category}
+                            icon={productIconMap?.get(sale.productId)}
                             sizeClassName="w-8 h-8"
                             imgClassName="w-6 h-6"
                           />
@@ -373,6 +374,7 @@ export function SalesReportModule({
                       <ProductThumb
                         name={sale.productName}
                         category={sale.category}
+                        icon={productIconMap?.get(sale.productId)}
                         sizeClassName="w-9 h-9"
                         imgClassName="w-7 h-7"
                       />

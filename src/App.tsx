@@ -45,6 +45,7 @@ import {
   type SaleRecord,
 } from './types/inventory';
 import type { ValidatedProductPayload } from './utils/barcodeDecoder';
+import { isValidStationeryIconId } from './utils/stationeryAssets';
 import { useAppTheme } from './utils/theme';
 
 function makeSafeDocId(prefix: string): string {
@@ -208,6 +209,7 @@ function MainApp() {
             shelfLocation:
               typeof data.shelfLocation === 'string' ? data.shelfLocation : undefined,
             notes: typeof data.notes === 'string' ? data.notes : undefined,
+            icon: isValidStationeryIconId(data.icon) ? data.icon : undefined,
             ownerId: String(data.ownerId || ''),
             createdAt: data.createdAt || null,
             updatedAt: data.updatedAt || null,
@@ -264,6 +266,7 @@ function MainApp() {
               typeof data.receiptNumber === 'string' ? data.receiptNumber : undefined,
             paymentMethod:
               data.paymentMethod === 'card' ||
+              data.paymentMethod === 'c2c' ||
               data.paymentMethod === 'cash' ||
               data.paymentMethod === 'mobile'
                 ? data.paymentMethod
@@ -377,6 +380,7 @@ function MainApp() {
         quantity: payload.quantity,
         unit: payload.unit,
         salePrice: payload.salePrice,
+        icon: payload.icon,
         ownerId: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -413,6 +417,7 @@ function MainApp() {
         quantity: payload.quantity,
         unit: payload.unit,
         salePrice: payload.salePrice,
+        icon: payload.icon,
         brand: payload.brand ? payload.brand : deleteField(),
         purchasePrice:
           typeof payload.purchasePrice === 'number' ? payload.purchasePrice : deleteField(),
@@ -492,9 +497,12 @@ function MainApp() {
             sellQty: number;
             nextQty: number;
             grossLineTotal: number;
+            itemDiscount: number;
+            afterItemDiscount: number;
           }> = [];
 
-          let subtotalAmount = 0;
+          let grossSubtotal = 0;
+          let itemsDiscountTotal = 0;
 
           for (const { cartItem, productRef, snap } of snapshots) {
             if (!snap.exists()) {
@@ -515,7 +523,18 @@ function MainApp() {
 
             const nextQty = Math.max(0, Math.round((currentQty - sellQty) * 100) / 100);
             const grossLineTotal = Math.round(sellQty * unitPrice * 100) / 100;
-            subtotalAmount += grossLineTotal;
+            const rawItemDiscount =
+              typeof cartItem.discountAmount === 'number' && cartItem.discountAmount > 0
+                ? Math.round(cartItem.discountAmount * 100) / 100
+                : 0;
+            const itemDiscount = Math.min(grossLineTotal, rawItemDiscount);
+            const afterItemDiscount = Math.max(
+              0,
+              Math.round((grossLineTotal - itemDiscount) * 100) / 100
+            );
+
+            grossSubtotal += grossLineTotal;
+            itemsDiscountTotal += itemDiscount;
 
             baseItems.push({
               productRef,
@@ -528,40 +547,59 @@ function MainApp() {
               sellQty,
               nextQty,
               grossLineTotal,
+              itemDiscount,
+              afterItemDiscount,
             });
           }
 
-          subtotalAmount = Math.round(subtotalAmount * 100) / 100;
-          const requestedDiscount =
+          grossSubtotal = Math.round(grossSubtotal * 100) / 100;
+          itemsDiscountTotal = Math.round(itemsDiscountTotal * 100) / 100;
+          const netBeforeOrderDiscount = Math.max(
+            0,
+            Math.round((grossSubtotal - itemsDiscountTotal) * 100) / 100
+          );
+          const requestedOrderDiscount =
             typeof options.discountAmount === 'number' && options.discountAmount > 0
-              ? Math.min(subtotalAmount, Math.round(options.discountAmount * 100) / 100)
+              ? Math.min(
+                  netBeforeOrderDiscount,
+                  Math.round(options.discountAmount * 100) / 100
+                )
               : 0;
 
-          let remainingDiscount = requestedDiscount;
+          let remainingOrderDiscount = requestedOrderDiscount;
           const receiptLines: ReceiptLineItem[] = [];
 
           // 2. Apply all stock deductions and sale records atomically
           for (let i = 0; i < baseItems.length; i++) {
             const entry = baseItems[i];
-            let lineDiscount = 0;
-            if (requestedDiscount > 0 && subtotalAmount > 0) {
+            let extraLineDiscount = 0;
+            if (requestedOrderDiscount > 0 && netBeforeOrderDiscount > 0) {
               if (i === baseItems.length - 1) {
-                lineDiscount = Math.min(entry.grossLineTotal, remainingDiscount);
+                extraLineDiscount = Math.min(
+                  entry.afterItemDiscount,
+                  remainingOrderDiscount
+                );
               } else {
-                lineDiscount = Math.min(
-                  entry.grossLineTotal,
+                extraLineDiscount = Math.min(
+                  entry.afterItemDiscount,
                   Math.round(
-                    (requestedDiscount * (entry.grossLineTotal / subtotalAmount)) * 100
+                    requestedOrderDiscount *
+                      (entry.afterItemDiscount / netBeforeOrderDiscount) *
+                      100
                   ) / 100
                 );
               }
-              lineDiscount = Math.max(0, Math.round(lineDiscount * 100) / 100);
-              remainingDiscount = Math.max(
+              extraLineDiscount = Math.max(0, Math.round(extraLineDiscount * 100) / 100);
+              remainingOrderDiscount = Math.max(
                 0,
-                Math.round((remainingDiscount - lineDiscount) * 100) / 100
+                Math.round((remainingOrderDiscount - extraLineDiscount) * 100) / 100
               );
             }
 
+            const lineDiscount = Math.min(
+              entry.grossLineTotal,
+              Math.round((entry.itemDiscount + extraLineDiscount) * 100) / 100
+            );
             const netLineTotal = Math.max(
               0,
               Math.round((entry.grossLineTotal - lineDiscount) * 100) / 100
@@ -602,14 +640,17 @@ function MainApp() {
               quantity: entry.sellQty,
               unit: entry.unit,
               unitPrice: entry.unitPrice,
+              discountAmount: lineDiscount > 0 ? lineDiscount : undefined,
               lineTotal: entry.grossLineTotal,
             });
           }
 
           return {
             lineItems: receiptLines,
-            subtotalAmount,
-            appliedDiscount: requestedDiscount,
+            subtotalAmount: grossSubtotal,
+            appliedDiscount: Math.round(
+              (itemsDiscountTotal + requestedOrderDiscount) * 100
+            ) / 100,
           };
         });
 
@@ -689,6 +730,10 @@ function MainApp() {
         quantity: s.quantity,
         unit: s.unit,
         unitPrice: s.unitPrice,
+        discountAmount:
+          typeof s.discountAmount === 'number' && s.discountAmount > 0
+            ? s.discountAmount
+            : undefined,
         lineTotal: Math.round(s.quantity * s.unitPrice * 100) / 100,
       }));
       const totalAmount =

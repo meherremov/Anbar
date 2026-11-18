@@ -66,6 +66,27 @@ service cloud.firestore {
       return !(key in data) || isValidNonNegativeNumber(data[key]);
     }
 
+    function isValidOptionalIcon(data) {
+      return !('icon' in data) || (
+        data.icon is string
+        && data.icon.size() <= 40
+        && data.icon in [
+          'pen',
+          'pencil',
+          'notebook',
+          'eraser',
+          'marker',
+          'ruler',
+          'folder',
+          'paper',
+          'glue_tape',
+          'scissors_stapler',
+          'paint_brush',
+          'stationery_default'
+        ]
+      );
+    }
+
     // --- Validation Blueprints ---
     function isValidProduct(data) {
       return data.keys().hasAll([
@@ -93,6 +114,7 @@ service cloud.firestore {
           'minStock',
           'shelfLocation',
           'notes',
+          'icon',
           'ownerId',
           'createdAt',
           'updatedAt'
@@ -110,6 +132,7 @@ service cloud.firestore {
         && isValidOptionalNonNegativeNumber(data, 'minStock')
         && isValidOptionalString(data, 'shelfLocation', 64)
         && isValidOptionalString(data, 'notes', 500)
+        && isValidOptionalIcon(data)
         && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -165,7 +188,7 @@ service cloud.firestore {
         && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
         && data.ownerId == request.auth.uid
         && isValidOptionalString(data, 'receiptNumber', 40)
-        && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card', 'mobile'])
+        && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card', 'c2c', 'mobile'])
         && isValidOptionalString(data, 'cashierEmail', 160)
         && data.soldAt is timestamp;
     }
@@ -268,6 +291,7 @@ service cloud.firestore {
             'minStock',
             'shelfLocation',
             'notes',
+            'icon',
             'updatedAt'
           ])
         );

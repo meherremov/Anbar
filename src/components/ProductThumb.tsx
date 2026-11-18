@@ -1,10 +1,11 @@
 import { Package } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getStationeryImage } from '../utils/stationeryAssets';
 
 interface ProductThumbProps {
   name: string;
   category?: string;
+  icon?: string;
   sizeClassName?: string;
   imgClassName?: string;
 }
@@ -12,11 +13,16 @@ interface ProductThumbProps {
 export function ProductThumb({
   name,
   category = '',
+  icon,
   sizeClassName = 'w-10 h-10',
   imgClassName = 'w-8 h-8',
 }: ProductThumbProps) {
   const [failed, setFailed] = useState(false);
-  const { src, alt } = getStationeryImage(name, category);
+  const { src, alt } = getStationeryImage(name, category, icon);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   return (
     <span

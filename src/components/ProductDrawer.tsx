@@ -23,6 +23,10 @@ import {
   validateAndSanitizeProduct,
   type ValidatedProductPayload,
 } from '../utils/barcodeDecoder';
+import {
+  resolveStationeryIconId,
+  STATIONERY_ICON_OPTIONS,
+} from '../utils/stationeryAssets';
 import { BarcodeGraphic } from './BarcodeGraphic';
 import { ProductThumb } from './ProductThumb';
 
@@ -64,6 +68,7 @@ function toFormValues(
       minStock: typeof product.minStock === 'number' ? String(product.minStock) : '5',
       shelfLocation: product.shelfLocation || '',
       notes: product.notes || '',
+      icon: product.icon || '',
     };
   }
 
@@ -80,6 +85,7 @@ function toFormValues(
     minStock: '5',
     shelfLocation: '',
     notes: '',
+    icon: '',
   };
 }
 
@@ -249,6 +255,7 @@ export function ProductDrawer({
             <ProductThumb
               name={form.name}
               category={form.category}
+              icon={form.icon}
               sizeClassName="w-10 h-10"
               imgClassName="w-8 h-8"
             />
@@ -395,6 +402,63 @@ export function ProductDrawer({
               placeholder="Məs: A4 Çap Kağızı 80 q/m² (500 vərəq)"
               className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
             />
+          </div>
+
+          {/* Stationery PNG Icon Picker */}
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                Məhsul ikonu (PNG)
+              </span>
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, icon: '' }))}
+                className={`text-xs font-medium px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                  !form.icon
+                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                {!form.icon ? 'Avtomatik seçilir' : 'Avtomatikə qaytar'}
+              </button>
+            </div>
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+              {STATIONERY_ICON_OPTIONS.map((opt) => {
+                const autoMatchedId = resolveStationeryIconId(form.name, form.category);
+                const isSelected = form.icon
+                  ? form.icon === opt.id
+                  : autoMatchedId === opt.id;
+                const isExplicit = form.icon === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        icon: prev.icon === opt.id ? '' : opt.id,
+                      }))
+                    }
+                    className={`flex flex-col items-center justify-center gap-1 p-2 rounded-lg border text-center transition-all cursor-pointer ${
+                      isSelected
+                        ? isExplicit
+                          ? 'border-blue-600 bg-blue-50/80 dark:bg-blue-950/60 dark:border-blue-500 ring-1 ring-blue-600/30'
+                          : 'border-blue-400/80 bg-blue-50/40 dark:bg-blue-950/35 dark:border-blue-700'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <img
+                      src={opt.src}
+                      alt={opt.label}
+                      className="w-7 h-7 object-contain select-none"
+                    />
+                    <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 truncate max-w-full">
+                      {opt.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Category & Brand */}

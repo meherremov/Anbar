@@ -67,6 +67,25 @@
           "maxLength": 500,
           "description": "Optional owner notes for this product."
         },
+        "icon": {
+          "type": "string",
+          "maxLength": 40,
+          "enum": [
+            "pen",
+            "pencil",
+            "notebook",
+            "eraser",
+            "marker",
+            "ruler",
+            "folder",
+            "paper",
+            "glue_tape",
+            "scissors_stapler",
+            "paint_brush",
+            "stationery_default"
+          ],
+          "description": "Optional stationery icon identifier displayed alongside the product."
+        },
         "ownerId": {
           "type": "string",
           "minLength": 1,
@@ -188,9 +207,9 @@
         },
         "paymentMethod": {
           "type": "string",
-          "enum": ["cash", "card", "mobile"],
+          "enum": ["cash", "card", "c2c", "mobile"],
           "maxLength": 16,
-          "description": "Optional payment method ('cash', 'card', or 'mobile')."
+          "description": "Optional payment method ('cash', 'card', 'c2c', or 'mobile')."
         },
         "discountAmount": {
           "type": "number",
