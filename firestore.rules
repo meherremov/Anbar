@@ -230,7 +230,7 @@ service cloud.firestore {
 
     // --- Collection: /authorized_users/{emailId} ---
     match /authorized_users/{emailId} {
-      // Users can check only their own email record; admin can read any
+      // Users can check only their own email record; admin can read any allowlist entry
       allow get: if isAdmin() || (
         isSignedIn()
         && request.auth.token.email_verified == true
@@ -253,12 +253,14 @@ service cloud.firestore {
         && isValidEmailId(emailId);
     }
 
-    // --- Collection: /products/{productId} ---
+    // --- Collection: /products/{productId} (Strictly isolated per user) ---
     match /products/{productId} {
       allow get: if isAuthorizedStoreUser()
-        && isValidId(productId);
+        && isValidId(productId)
+        && existing().ownerId == request.auth.uid;
 
-      allow list: if isAuthorizedStoreUser();
+      allow list: if isAuthorizedStoreUser()
+        && existing().ownerId == request.auth.uid;
 
       allow create: if isAuthorizedStoreUser()
         && isValidId(productId)
@@ -270,6 +272,7 @@ service cloud.firestore {
       allow update: if isAuthorizedStoreUser()
         && isValidId(productId)
         && isValidProduct(incoming())
+        && existing().ownerId == request.auth.uid
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
@@ -297,15 +300,18 @@ service cloud.firestore {
         );
 
       allow delete: if isAuthorizedStoreUser()
-        && isValidId(productId);
+        && isValidId(productId)
+        && existing().ownerId == request.auth.uid;
     }
 
-    // --- Collection: /categories/{categoryId} ---
+    // --- Collection: /categories/{categoryId} (Strictly isolated per user) ---
     match /categories/{categoryId} {
       allow get: if isAuthorizedStoreUser()
-        && isValidId(categoryId);
+        && isValidId(categoryId)
+        && existing().ownerId == request.auth.uid;
 
-      allow list: if isAuthorizedStoreUser();
+      allow list: if isAuthorizedStoreUser()
+        && existing().ownerId == request.auth.uid;
 
       allow create: if isAuthorizedStoreUser()
         && isValidId(categoryId)
@@ -316,49 +322,58 @@ service cloud.firestore {
       allow update: if isAuthorizedStoreUser()
         && isValidId(categoryId)
         && isValidCategory(incoming())
+        && existing().ownerId == request.auth.uid
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().diff(existing()).affectedKeys().hasOnly(['name']);
 
       allow delete: if isAuthorizedStoreUser()
-        && isValidId(categoryId);
+        && isValidId(categoryId)
+        && existing().ownerId == request.auth.uid;
     }
 
-    // --- Collection: /sales/{saleId} ---
+    // --- Collection: /sales/{saleId} (Strictly isolated per user) ---
     match /sales/{saleId} {
       allow get: if isAuthorizedStoreUser()
-        && isValidId(saleId);
+        && isValidId(saleId)
+        && existing().ownerId == request.auth.uid;
 
-      allow list: if isAuthorizedStoreUser();
+      allow list: if isAuthorizedStoreUser()
+        && existing().ownerId == request.auth.uid;
 
       allow create: if isAuthorizedStoreUser()
         && isValidId(saleId)
         && isValidSale(incoming())
         && incoming().soldAt == request.time
         && exists(/databases/$(database)/documents/products/$(incoming().productId))
+        && get(/databases/$(database)/documents/products/$(incoming().productId)).data.ownerId == request.auth.uid
         && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantity <= get(/databases/$(database)/documents/products/$(incoming().productId)).data.quantity;
 
       allow update: if false;
 
       allow delete: if isAuthorizedStoreUser()
-        && isValidId(saleId);
+        && isValidId(saleId)
+        && existing().ownerId == request.auth.uid;
     }
 
-    // --- Collection: /store_settings/{settingId} ---
-    match /store_settings/{settingId} {
+    // --- Collection: /store_settings/{userId} (Strictly isolated per user) ---
+    match /store_settings/{userId} {
       allow get: if isAuthorizedStoreUser()
-        && settingId == 'receipt';
+        && isValidId(userId)
+        && userId == request.auth.uid;
 
       allow list: if false;
 
       allow create: if isAuthorizedStoreUser()
-        && settingId == 'receipt'
+        && isValidId(userId)
+        && userId == request.auth.uid
         && isValidReceiptSettings(incoming())
         && incoming().updatedAt == request.time;
 
       allow update: if isAuthorizedStoreUser()
-        && settingId == 'receipt'
+        && isValidId(userId)
+        && userId == request.auth.uid
         && isValidReceiptSettings(incoming())
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([

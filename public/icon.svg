@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="112" fill="#13233F"/>
+  <rect x="44" y="44" width="424" height="424" rx="88" fill="#182D50" stroke="#254272" stroke-width="4"/>
+  <!-- Barcode bars at top -->
+  <rect x="160" y="114" width="16" height="68" rx="4" fill="#60A5FA"/>
+  <rect x="190" y="114" width="10" height="68" rx="4" fill="#93C5FD"/>
+  <rect x="214" y="114" width="22" height="68" rx="4" fill="#FFFFFF"/>
+  <rect x="250" y="114" width="12" height="68" rx="4" fill="#93C5FD"/>
+  <rect x="276" y="114" width="24" height="68" rx="4" fill="#FFFFFF"/>
+  <rect x="314" y="114" width="10" height="68" rx="4" fill="#60A5FA"/>
+  <rect x="336" y="114" width="16" height="68" rx="4" fill="#FFFFFF"/>
+  <!-- Shopping cart body -->
+  <path d="M116 218H164L202 336H348L388 238H182" stroke="#F59E0B" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Wheels -->
+  <circle cx="216" cy="384" r="24" fill="#F59E0B"/>
+  <circle cx="334" cy="384" r="24" fill="#F59E0B"/>
+</svg>

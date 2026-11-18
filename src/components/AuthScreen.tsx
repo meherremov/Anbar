@@ -1,8 +1,10 @@
-import { LogIn, LogOut, Moon, Package, ShieldAlert, ShoppingCart, Sun } from 'lucide-react';
+import { LogIn, LogOut, Moon, Package, ShieldAlert, ShoppingCart, Sun, WifiOff } from 'lucide-react';
 import { useState } from 'react';
 import stationeryShowcaseImg from '../assets/images/login_stationery_showcase_1794854445504.jpg';
 import { OWNER_EMAIL } from '../firebase';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import type { AppTheme } from '../utils/theme';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface AuthScreenProps {
   unauthorizedEmail: string | null;
@@ -24,6 +26,7 @@ export function AuthScreen({
   onSignOut,
 }: AuthScreenProps) {
   const [imageError, setImageError] = useState(false);
+  const isOnline = useOnlineStatus();
 
   return (
     <div className="min-h-screen bg-[#F0F4F9] dark:bg-[#0B1120] flex flex-col transition-colors">
@@ -37,6 +40,7 @@ export function AuthScreen({
           </span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <PWAInstallButton />
           <span className="hidden sm:inline text-xs font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
             Dəftərxana Sistemi
           </span>
@@ -110,10 +114,20 @@ export function AuthScreen({
                     </div>
                   ) : null}
 
+                  {!isOnline ? (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-lg text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                      <WifiOff className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>
+                        İnternet bağlantısı yoxdur. İlk dəfə Google ilə giriş üçün internet
+                        lazımdır; bir dəfə daxil olduqdan sonra tətbiq oflayn işləyəcək.
+                      </span>
+                    </div>
+                  ) : null}
+
                   <button
                     type="button"
                     onClick={onSignIn}
-                    disabled={busy}
+                    disabled={busy || !isOnline}
                     className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-600 shadow-xs disabled:opacity-60 rounded-xl transition-colors whitespace-nowrap cursor-pointer"
                   >
                     <LogIn className="w-4 h-4" />

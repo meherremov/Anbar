@@ -340,31 +340,31 @@
       "schema": {
         "$ref": "#/entities/Product"
       },
-      "description": "Office supply store products managed by authorized store users."
+      "description": "Office supply store products isolated per authorized user via ownerId."
     },
     "/categories/{categoryId}": {
       "schema": {
         "$ref": "#/entities/Category"
       },
-      "description": "Store product categories managed by authorized store users."
+      "description": "Store product categories isolated per authorized user via ownerId."
     },
     "/sales/{saleId}": {
       "schema": {
         "$ref": "#/entities/Sale"
       },
-      "description": "Completed sales records managed by authorized store users."
+      "description": "Completed sales records isolated per authorized user via ownerId."
     },
     "/authorized_users/{emailId}": {
       "schema": {
         "$ref": "#/entities/AuthorizedUser"
       },
-      "description": "Allowlist of Google account emails permitted to access the store."
+      "description": "Allowlist of Google account emails permitted to sign in with their own isolated workspace."
     },
-    "/store_settings/{settingId}": {
+    "/store_settings/{userId}": {
       "schema": {
         "$ref": "#/entities/ReceiptSettings"
       },
-      "description": "Store configuration documents such as thermal receipt layout settings."
+      "description": "Per-user thermal receipt layout and store settings keyed by Firebase Auth UID."
     }
   }
 }

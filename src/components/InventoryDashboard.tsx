@@ -58,6 +58,7 @@ import { AuthorizedUsersPanel } from './AuthorizedUsersPanel';
 import { CategoryValueChart } from './CategoryValueChart';
 import { PosWorkspace } from './PosWorkspace';
 import { ProductThumb } from './ProductThumb';
+import { PWAInstallButton } from './PWAInstallButton';
 import { SalesReportModule } from './SalesReportModule';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -771,8 +772,10 @@ export function InventoryDashboard({
             </div>
           </div>
 
-          {/* Right: Live Date, Live Clock, User Profile Dropdown */}
-          <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+          {/* Right: Install PWA, Live Date, Live Clock, User Profile Dropdown */}
+          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+            <PWAInstallButton />
+
             <div className="hidden md:flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
               <Calendar className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
               <span>{formatLiveDate(now)}</span>

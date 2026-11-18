@@ -4,20 +4,25 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDocFromCache,
   onSnapshot,
+  query,
   runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
+  writeBatch,
   type FieldValue,
 } from 'firebase/firestore';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalBarcodeListener } from './components/GlobalBarcodeListener';
 import { InventoryDashboard } from './components/InventoryDashboard';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { ProductDrawer } from './components/ProductDrawer';
 import { ReceiptPreviewModal } from './components/ReceiptPreviewModal';
 import { ReceiptSettingsModal } from './components/ReceiptSettingsModal';
@@ -44,9 +49,12 @@ import {
   type ReceiptSettings,
   type SaleRecord,
 } from './types/inventory';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import type { ValidatedProductPayload } from './utils/barcodeDecoder';
 import { isValidStationeryIconId } from './utils/stationeryAssets';
 import { useAppTheme } from './utils/theme';
+
+const ALLOWLIST_CACHE_PREFIX = 'ofis_anbari_allowlist_';
 
 function makeSafeDocId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
@@ -62,8 +70,65 @@ function makeReceiptNumber(): string {
   return `CHK-${yy}${mm}${dd}-${rand}`;
 }
 
+async function runOfflineSafeWrite(
+  writeOp: () => Promise<void>,
+  opType: OperationType,
+  docPath: string
+): Promise<'online' | 'offline'> {
+  const promise = writeOp();
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    promise.catch((err) => {
+      console.error('Deferred offline sync error:', docPath, err);
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+    return 'offline';
+  }
+
+  let timedOut = false;
+  return new Promise<'online' | 'offline'>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      resolve('offline');
+    }, 1800);
+
+    promise.then(
+      () => {
+        window.clearTimeout(timer);
+        if (!timedOut) resolve('online');
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        if (!timedOut) {
+          try {
+            handleFirestoreError(error, opType, docPath);
+          } catch (handledErr) {
+            reject(handledErr);
+          }
+        } else {
+          console.error('Deferred sync error:', docPath, error);
+        }
+      }
+    );
+  });
+}
+
+function isNetworkOrOfflineError(error: unknown): boolean {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('client is offline') ||
+    msg.includes('unavailable') ||
+    msg.includes('failed to get document') ||
+    msg.includes('could not reach') ||
+    msg.includes('network')
+  );
+}
+
 function MainApp() {
   const { theme, toggleTheme } = useAppTheme();
+  const isOnline = useOnlineStatus();
+  const wasOfflineRef = useRef<boolean>(false);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [accessChecked, setAccessChecked] = useState<boolean>(false);
@@ -72,6 +137,8 @@ function MainApp() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
+  const productsRef = useRef<Product[]>(products);
+  productsRef.current = products;
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<AuthorizedUser[]>([]);
@@ -139,7 +206,18 @@ function MainApp() {
     Boolean(user?.emailVerified) &&
     user?.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
-  // Check allowlist status for non-admin signed-in users
+  useEffect(() => {
+    if (!isOnline) {
+      wasOfflineRef.current = true;
+      return;
+    }
+    if (wasOfflineRef.current) {
+      wasOfflineRef.current = false;
+      showNotice('İnternet bərpa olundu — məlumatlar sinxronlaşdırılır');
+    }
+  }, [isOnline, showNotice]);
+
+  // Check allowlist status for non-admin signed-in users (with offline cache support)
   useEffect(() => {
     if (!authReady) return;
     if (!user || !user.email || !user.emailVerified) {
@@ -155,14 +233,54 @@ function MainApp() {
 
     setAccessChecked(false);
     const emailKey = user.email.toLowerCase();
+    const cacheKey = `${ALLOWLIST_CACHE_PREFIX}${user.uid}`;
     const docPath = `authorized_users/${emailKey}`;
     const unsubAllowlist = onSnapshot(
       doc(db, 'authorized_users', emailKey),
       (snap) => {
-        setIsAllowlistedUser(snap.exists());
+        const exists = snap.exists();
+        if (exists) {
+          try {
+            window.localStorage.setItem(cacheKey, emailKey);
+          } catch {
+            // Ignore storage errors
+          }
+          setIsAllowlistedUser(true);
+          setAccessChecked(true);
+          return;
+        }
+        if (!snap.metadata.fromCache) {
+          try {
+            window.localStorage.removeItem(cacheKey);
+          } catch {
+            // Ignore storage errors
+          }
+          setIsAllowlistedUser(false);
+          setAccessChecked(true);
+          return;
+        }
+        // Snapshot came from empty local cache while offline: consult local fallback
+        let cachedEmail: string | null = null;
+        try {
+          cachedEmail = window.localStorage.getItem(cacheKey);
+        } catch {
+          cachedEmail = null;
+        }
+        setIsAllowlistedUser(cachedEmail === emailKey);
         setAccessChecked(true);
       },
       (error) => {
+        if (!navigator.onLine) {
+          try {
+            if (window.localStorage.getItem(cacheKey) === emailKey) {
+              setIsAllowlistedUser(true);
+              setAccessChecked(true);
+              return;
+            }
+          } catch {
+            // Ignore storage errors
+          }
+        }
         setIsAllowlistedUser(false);
         setAccessChecked(true);
         handleFirestoreError(error, OperationType.GET, docPath);
@@ -181,6 +299,7 @@ function MainApp() {
       setCategories([]);
       setSales([]);
       setAuthorizedUsers([]);
+      setReceiptSettings(DEFAULT_RECEIPT_SETTINGS);
       setDataLoading(false);
       return;
     }
@@ -188,8 +307,12 @@ function MainApp() {
     setDataLoading(true);
 
     const productsPath = 'products';
-    const unsubProducts = onSnapshot(
+    const productsQuery = query(
       collection(db, productsPath),
+      where('ownerId', '==', user.uid)
+    );
+    const unsubProducts = onSnapshot(
+      productsQuery,
       (snapshot) => {
         const list: Product[] = snapshot.docs.map((d) => {
           const data = d.data();
@@ -224,8 +347,12 @@ function MainApp() {
     );
 
     const categoriesPath = 'categories';
-    const unsubCategories = onSnapshot(
+    const categoriesQuery = query(
       collection(db, categoriesPath),
+      where('ownerId', '==', user.uid)
+    );
+    const unsubCategories = onSnapshot(
+      categoriesQuery,
       (snapshot) => {
         const list: CategoryItem[] = snapshot.docs.map((d) => {
           const data = d.data();
@@ -244,8 +371,12 @@ function MainApp() {
     );
 
     const salesPath = 'sales';
-    const unsubSales = onSnapshot(
+    const salesQuery = query(
       collection(db, salesPath),
+      where('ownerId', '==', user.uid)
+    );
+    const unsubSales = onSnapshot(
+      salesQuery,
       (snapshot) => {
         const list: SaleRecord[] = snapshot.docs.map((d) => {
           const data = d.data();
@@ -283,9 +414,9 @@ function MainApp() {
       }
     );
 
-    const receiptSettingsPath = 'store_settings/receipt';
+    const receiptSettingsPath = `store_settings/${user.uid}`;
     const unsubReceiptSettings = onSnapshot(
-      doc(db, 'store_settings', 'receipt'),
+      doc(db, 'store_settings', user.uid),
       (snap) => {
         if (!snap.exists()) {
           setReceiptSettings(DEFAULT_RECEIPT_SETTINGS);
@@ -364,6 +495,13 @@ function MainApp() {
   };
 
   const handleSignOut = async () => {
+    if (user) {
+      try {
+        window.localStorage.removeItem(`${ALLOWLIST_CACHE_PREFIX}${user.uid}`);
+      } catch {
+        // Ignore storage errors
+      }
+    }
     await signOut(auth);
   };
 
@@ -395,12 +533,16 @@ function MainApp() {
       if (payload.shelfLocation) docData.shelfLocation = payload.shelfLocation;
       if (payload.notes) docData.notes = payload.notes;
 
-      try {
-        await setDoc(doc(db, 'products', productId), docData);
-        showNotice('Məhsul əlavə edildi və yadda saxlanıldı');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, docPath);
-      }
+      const mode = await runOfflineSafeWrite(
+        () => setDoc(doc(db, 'products', productId), docData),
+        OperationType.CREATE,
+        docPath
+      );
+      showNotice(
+        mode === 'offline'
+          ? 'Məhsul oflayn əlavə edildi (internet gələndə sinxronlaşacaq)'
+          : 'Məhsul əlavə edildi və yadda saxlanıldı'
+      );
     },
     [user, showNotice]
   );
@@ -427,12 +569,16 @@ function MainApp() {
         updatedAt: serverTimestamp(),
       };
 
-      try {
-        await updateDoc(doc(db, 'products', productId), updateData);
-        showNotice('Dəyişikliklər yadda saxlanıldı');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, docPath);
-      }
+      const mode = await runOfflineSafeWrite(
+        () => updateDoc(doc(db, 'products', productId), updateData),
+        OperationType.UPDATE,
+        docPath
+      );
+      showNotice(
+        mode === 'offline'
+          ? 'Dəyişikliklər oflayn yadda saxlanıldı'
+          : 'Dəyişikliklər yadda saxlanıldı'
+      );
     },
     [user, showNotice]
   );
@@ -441,15 +587,20 @@ function MainApp() {
     async (product: Product, delta: number) => {
       const nextQty = Math.max(0, Math.round((product.quantity + delta) * 100) / 100);
       const docPath = `products/${product.id}`;
-      try {
-        await updateDoc(doc(db, 'products', product.id), {
-          quantity: nextQty,
-          updatedAt: serverTimestamp(),
-        });
-        showNotice(`${product.name}: stok yeniləndi (${nextQty} ${product.unit})`);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, docPath);
-      }
+      const mode = await runOfflineSafeWrite(
+        () =>
+          updateDoc(doc(db, 'products', product.id), {
+            quantity: nextQty,
+            updatedAt: serverTimestamp(),
+          }),
+        OperationType.UPDATE,
+        docPath
+      );
+      showNotice(
+        mode === 'offline'
+          ? `${product.name}: stok oflayn yeniləndi (${nextQty} ${product.unit})`
+          : `${product.name}: stok yeniləndi (${nextQty} ${product.unit})`
+      );
     },
     [showNotice]
   );
@@ -474,6 +625,237 @@ function MainApp() {
       const cashierEmail = (user.email || '').slice(0, 160);
       const cashierLabel = cashierEmail.split('@')[0] || 'Kassir';
       const pathHint = `checkout:${receiptNumber}`;
+
+      const executeOfflineBatchCheckout = async (): Promise<ReceiptData> => {
+        const baseItems: Array<{
+          productRef: ReturnType<typeof doc>;
+          productId: string;
+          productName: string;
+          barcode: string;
+          category: string;
+          unit: string;
+          unitPrice: number;
+          sellQty: number;
+          nextQty: number;
+          grossLineTotal: number;
+          itemDiscount: number;
+          afterItemDiscount: number;
+        }> = [];
+
+        let grossSubtotal = 0;
+        let itemsDiscountTotal = 0;
+
+        for (const cartItem of items) {
+          const productRef = doc(db, 'products', cartItem.product.id);
+          let sourceData: Record<string, unknown> | null = null;
+          try {
+            const cachedSnap = await getDocFromCache(productRef);
+            if (cachedSnap.exists()) {
+              sourceData = cachedSnap.data() as Record<string, unknown>;
+            }
+          } catch {
+            // Fall back to live React state snapshot
+          }
+          if (!sourceData) {
+            const localMatch = productsRef.current.find(
+              (p) => p.id === cartItem.product.id
+            );
+            if (localMatch) {
+              sourceData = {
+                name: localMatch.name,
+                barcode: localMatch.barcode,
+                category: localMatch.category,
+                unit: localMatch.unit,
+                salePrice: localMatch.salePrice,
+                quantity: localMatch.quantity,
+                ownerId: localMatch.ownerId,
+              };
+            }
+          }
+
+          if (!sourceData) {
+            throw new Error(`"${cartItem.product.name}" bazada tapılmadı.`);
+          }
+          if (sourceData.ownerId !== user.uid) {
+            throw new Error(`"${cartItem.product.name}" sizin hesabınıza aid deyil.`);
+          }
+
+          const productName = String(sourceData.name || '');
+          const unit = String(sourceData.unit || 'ədəd');
+          const unitPrice = Number(sourceData.salePrice ?? 0);
+          const currentQty = Number(sourceData.quantity ?? 0);
+          const sellQty = Math.round(cartItem.quantity * 100) / 100;
+
+          if (sellQty <= 0 || sellQty > currentQty) {
+            throw new Error(
+              `"${productName}" üçün anbarda kifayət qədər stok yoxdur. Mövcud stok: ${currentQty} ${unit}`
+            );
+          }
+
+          const nextQty = Math.max(0, Math.round((currentQty - sellQty) * 100) / 100);
+          const grossLineTotal = Math.round(sellQty * unitPrice * 100) / 100;
+          const rawItemDiscount =
+            typeof cartItem.discountAmount === 'number' && cartItem.discountAmount > 0
+              ? Math.round(cartItem.discountAmount * 100) / 100
+              : 0;
+          const itemDiscount = Math.min(grossLineTotal, rawItemDiscount);
+          const afterItemDiscount = Math.max(
+            0,
+            Math.round((grossLineTotal - itemDiscount) * 100) / 100
+          );
+
+          grossSubtotal += grossLineTotal;
+          itemsDiscountTotal += itemDiscount;
+
+          baseItems.push({
+            productRef,
+            productId: cartItem.product.id,
+            productName,
+            barcode: String(sourceData.barcode || ''),
+            category: String(sourceData.category || 'Digər'),
+            unit,
+            unitPrice,
+            sellQty,
+            nextQty,
+            grossLineTotal,
+            itemDiscount,
+            afterItemDiscount,
+          });
+        }
+
+        grossSubtotal = Math.round(grossSubtotal * 100) / 100;
+        itemsDiscountTotal = Math.round(itemsDiscountTotal * 100) / 100;
+        const netBeforeOrderDiscount = Math.max(
+          0,
+          Math.round((grossSubtotal - itemsDiscountTotal) * 100) / 100
+        );
+        const requestedOrderDiscount =
+          typeof options.discountAmount === 'number' && options.discountAmount > 0
+            ? Math.min(
+                netBeforeOrderDiscount,
+                Math.round(options.discountAmount * 100) / 100
+              )
+            : 0;
+
+        let remainingOrderDiscount = requestedOrderDiscount;
+        const receiptLines: ReceiptLineItem[] = [];
+        const batch = writeBatch(db);
+
+        for (let i = 0; i < baseItems.length; i++) {
+          const entry = baseItems[i];
+          let extraLineDiscount = 0;
+          if (requestedOrderDiscount > 0 && netBeforeOrderDiscount > 0) {
+            if (i === baseItems.length - 1) {
+              extraLineDiscount = Math.min(
+                entry.afterItemDiscount,
+                remainingOrderDiscount
+              );
+            } else {
+              extraLineDiscount = Math.min(
+                entry.afterItemDiscount,
+                Math.round(
+                  requestedOrderDiscount *
+                    (entry.afterItemDiscount / netBeforeOrderDiscount) *
+                    100
+                ) / 100
+              );
+            }
+            extraLineDiscount = Math.max(0, Math.round(extraLineDiscount * 100) / 100);
+            remainingOrderDiscount = Math.max(
+              0,
+              Math.round((remainingOrderDiscount - extraLineDiscount) * 100) / 100
+            );
+          }
+
+          const lineDiscount = Math.min(
+            entry.grossLineTotal,
+            Math.round((entry.itemDiscount + extraLineDiscount) * 100) / 100
+          );
+          const netLineTotal = Math.max(
+            0,
+            Math.round((entry.grossLineTotal - lineDiscount) * 100) / 100
+          );
+          const saleId = makeSafeDocId('sale');
+
+          const salePayload: Record<string, unknown> = {
+            productId: entry.productId,
+            productName: entry.productName.slice(0, 160),
+            barcode: entry.barcode.slice(0, 64),
+            category: entry.category.slice(0, 64),
+            quantity: entry.sellQty,
+            unit: entry.unit.slice(0, 24),
+            unitPrice: entry.unitPrice,
+            totalAmount: netLineTotal,
+            ownerId: user.uid,
+            receiptNumber,
+            paymentMethod: options.paymentMethod,
+            soldAt: serverTimestamp(),
+          };
+          if (lineDiscount > 0) {
+            salePayload.discountAmount = lineDiscount;
+          }
+          if (cashierEmail) {
+            salePayload.cashierEmail = cashierEmail;
+          }
+
+          batch.update(entry.productRef, {
+            quantity: entry.nextQty,
+            updatedAt: serverTimestamp(),
+          });
+          batch.set(doc(db, 'sales', saleId), salePayload);
+
+          receiptLines.push({
+            productId: entry.productId,
+            productName: entry.productName,
+            barcode: entry.barcode,
+            quantity: entry.sellQty,
+            unit: entry.unit,
+            unitPrice: entry.unitPrice,
+            discountAmount: lineDiscount > 0 ? lineDiscount : undefined,
+            lineTotal: entry.grossLineTotal,
+          });
+        }
+
+        const appliedDiscount =
+          Math.round((itemsDiscountTotal + requestedOrderDiscount) * 100) / 100;
+        const totalAmount = Math.max(
+          0,
+          Math.round((grossSubtotal - appliedDiscount) * 100) / 100
+        );
+        const changeAmount =
+          typeof options.cashReceived === 'number' && options.cashReceived >= totalAmount
+            ? Math.round((options.cashReceived - totalAmount) * 100) / 100
+            : undefined;
+
+        const commitMode = await runOfflineSafeWrite(
+          () => batch.commit(),
+          OperationType.WRITE,
+          pathHint
+        );
+
+        showNotice(
+          commitMode === 'offline'
+            ? `Satış oflayn qeydə alındı (${receiptNumber}) · internet gələndə sinxronlaşacaq`
+            : `Satış tamamlandı (${receiptNumber}) · ${receiptLines.length} çeşid · ${totalAmount.toFixed(2)} AZN`
+        );
+
+        return {
+          receiptNumber,
+          issuedAt: new Date(),
+          cashierLabel,
+          paymentMethod: options.paymentMethod,
+          items: receiptLines,
+          subtotalAmount: grossSubtotal,
+          discountAmount: appliedDiscount > 0 ? appliedDiscount : undefined,
+          totalAmount,
+          cashReceived: options.cashReceived,
+          changeAmount,
+        };
+      };
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return executeOfflineBatchCheckout();
+      }
 
       try {
         const result = await runTransaction(db, async (transaction) => {
@@ -509,6 +891,9 @@ function MainApp() {
               throw new Error(`"${cartItem.product.name}" bazada tapılmadı.`);
             }
             const data = snap.data();
+            if (data.ownerId !== user.uid) {
+              throw new Error(`"${cartItem.product.name}" sizin hesabınıza aid deyil.`);
+            }
             const productName = String(data.name || '');
             const unit = String(data.unit || 'ədəd');
             const unitPrice = Number(data.salePrice ?? 0);
@@ -683,9 +1068,13 @@ function MainApp() {
         if (
           error instanceof Error &&
           (error.message.includes('kifayət qədər stok') ||
-            error.message.includes('tapılmadı'))
+            error.message.includes('tapılmadı') ||
+            error.message.includes('aid deyil'))
         ) {
           throw error;
+        }
+        if (isNetworkOrOfflineError(error)) {
+          return executeOfflineBatchCheckout();
         }
         handleFirestoreError(error, OperationType.WRITE, pathHint);
       }
@@ -696,23 +1085,28 @@ function MainApp() {
   const handleSaveReceiptSettings = useCallback(
     async (next: ReceiptSettings) => {
       if (!user) return;
-      const docPath = 'store_settings/receipt';
-      try {
-        await setDoc(doc(db, 'store_settings', 'receipt'), {
-          storeName: next.storeName,
-          subtitle: next.subtitle,
-          address: next.address,
-          phone: next.phone,
-          taxId: next.taxId,
-          footerNote: next.footerNote,
-          paperWidth: next.paperWidth,
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        });
-        showNotice('Çek və printer ayarları yadda saxlanıldı');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, docPath);
-      }
+      const docPath = `store_settings/${user.uid}`;
+      const mode = await runOfflineSafeWrite(
+        () =>
+          setDoc(doc(db, 'store_settings', user.uid), {
+            storeName: next.storeName,
+            subtitle: next.subtitle,
+            address: next.address,
+            phone: next.phone,
+            taxId: next.taxId,
+            footerNote: next.footerNote,
+            paperWidth: next.paperWidth,
+            updatedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          }),
+        OperationType.WRITE,
+        docPath
+      );
+      showNotice(
+        mode === 'offline'
+          ? 'Çek ayarları oflayn yadda saxlanıldı'
+          : 'Çek və printer ayarları yadda saxlanıldı'
+      );
     },
     [user, showNotice]
   );
@@ -773,16 +1167,21 @@ function MainApp() {
 
       const catId = makeSafeDocId('cat');
       const docPath = `categories/${catId}`;
-      try {
-        await setDoc(doc(db, 'categories', catId), {
-          name,
-          ownerId: user.uid,
-          createdAt: serverTimestamp(),
-        });
-        showNotice(`"${name}" kateqoriyası əlavə edildi`);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, docPath);
-      }
+      const mode = await runOfflineSafeWrite(
+        () =>
+          setDoc(doc(db, 'categories', catId), {
+            name,
+            ownerId: user.uid,
+            createdAt: serverTimestamp(),
+          }),
+        OperationType.CREATE,
+        docPath
+      );
+      showNotice(
+        mode === 'offline'
+          ? `"${name}" kateqoriyası oflayn əlavə edildi`
+          : `"${name}" kateqoriyası əlavə edildi`
+      );
     },
     [user, categories, showNotice]
   );
@@ -815,34 +1214,34 @@ function MainApp() {
     try {
       if (deleteTargetProduct) {
         const path = `products/${deleteTargetProduct.id}`;
-        try {
-          await deleteDoc(doc(db, 'products', deleteTargetProduct.id));
-          if (editingProduct?.id === deleteTargetProduct.id) {
-            setDrawerOpen(false);
-            setEditingProduct(null);
-          }
-          showNotice('Məhsul silindi');
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, path);
+        await runOfflineSafeWrite(
+          () => deleteDoc(doc(db, 'products', deleteTargetProduct.id)),
+          OperationType.DELETE,
+          path
+        );
+        if (editingProduct?.id === deleteTargetProduct.id) {
+          setDrawerOpen(false);
+          setEditingProduct(null);
         }
+        showNotice('Məhsul silindi');
         setDeleteTargetProduct(null);
       } else if (deleteTargetCategory) {
         const path = `categories/${deleteTargetCategory.id}`;
-        try {
-          await deleteDoc(doc(db, 'categories', deleteTargetCategory.id));
-          showNotice('Kateqoriya silindi');
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, path);
-        }
+        await runOfflineSafeWrite(
+          () => deleteDoc(doc(db, 'categories', deleteTargetCategory.id)),
+          OperationType.DELETE,
+          path
+        );
+        showNotice('Kateqoriya silindi');
         setDeleteTargetCategory(null);
       } else if (deleteTargetSale) {
         const path = `sales/${deleteTargetSale.id}`;
-        try {
-          await deleteDoc(doc(db, 'sales', deleteTargetSale.id));
-          showNotice('Satış qeydi silindi');
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, path);
-        }
+        await runOfflineSafeWrite(
+          () => deleteDoc(doc(db, 'sales', deleteTargetSale.id)),
+          OperationType.DELETE,
+          path
+        );
+        showNotice('Satış qeydi silindi');
         setDeleteTargetSale(null);
       } else if (deleteTargetAuthUser) {
         const path = `authorized_users/${deleteTargetAuthUser.id}`;
@@ -976,17 +1375,20 @@ function MainApp() {
 
   if (!user || !isAuthorizedStoreUser) {
     return (
-      <AuthScreen
-        unauthorizedEmail={
-          user && !isAuthorizedStoreUser ? user.email || 'naməlum hesab' : null
-        }
-        authError={authError}
-        busy={authBusy}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-      />
+      <>
+        <AuthScreen
+          unauthorizedEmail={
+            user && !isAuthorizedStoreUser ? user.email || 'naməlum hesab' : null
+          }
+          authError={authError}
+          busy={authBusy}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
@@ -1165,6 +1567,8 @@ function MainApp() {
         }}
         onConfirm={handleConfirmDelete}
       />
+
+      <OfflineIndicator />
     </>
   );
 }

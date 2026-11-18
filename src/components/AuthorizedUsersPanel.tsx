@@ -89,9 +89,10 @@ export function AuthorizedUsersPanel({
             Dostunuza və ya işçinizə giriş icazəsi verin
           </h2>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-            Aşağıya dostunuzun Google (Gmail) ünvanını əlavə edin və saytın linkini ona
-            göndərin. O, həmin linkdən &ldquo;Google ilə daxil ol&rdquo; düyməsinə basaraq
-            bu mağazanın məhsul və satışlarına daxil ola biləcək.
+            Aşağıya giriş icazəsi vermək istədiyiniz Google (Gmail) ünvanını əlavə edin
+            və saytın linkini göndərin. Hər bir istifadəçi və admin yalnız öz məhsullarını,
+            satışlarını və ayarlarını görür — hesablar arasında məlumatlar bir-birinə
+            görünmür.
           </p>
         </div>
 
