@@ -108,8 +108,11 @@ export function ProductDrawer({
 }: ProductDrawerProps) {
   const allCategories = useMemo(() => {
     const merged = new Set<string>([...DEFAULT_CATEGORIES, ...categories]);
+    if (product?.category) {
+      merged.add(product.category);
+    }
     return Array.from(merged);
-  }, [categories]);
+  }, [categories, product?.category]);
 
   const [form, setForm] = useState<ProductFormValues>(() =>
     toFormValues(product, initialBarcode, allCategories[0] || 'Digər')
@@ -139,18 +142,20 @@ export function ProductDrawer({
   // Apply barcode scanned from Camera/Gallery modal or GlobalBarcodeListener while drawer is open
   useEffect(() => {
     if (isOpen && scannedBarcodeOverride) {
-      setForm((prev) => ({
-        ...prev,
-        barcode: scannedBarcodeOverride.code,
-        barcodeFormat: scannedBarcodeOverride.format,
-      }));
+      setForm((prev) => {
+        if (!prev.name.trim()) {
+          window.setTimeout(() => nameInputRef.current?.focus(), 0);
+        }
+        return {
+          ...prev,
+          barcode: scannedBarcodeOverride.code,
+          barcodeFormat: scannedBarcodeOverride.format,
+        };
+      });
       setError(null);
-      if (!form.name.trim()) {
-        nameInputRef.current?.focus();
-      }
       onConsumeScannedOverride();
     }
-  }, [isOpen, scannedBarcodeOverride, onConsumeScannedOverride, form.name]);
+  }, [isOpen, scannedBarcodeOverride, onConsumeScannedOverride]);
 
   // Automatic cloud save when editing an existing product
   useEffect(() => {
@@ -482,6 +487,12 @@ export function ProductDrawer({
                     type="text"
                     value={newCategoryName}
                     maxLength={FIELD_LIMITS.CATEGORY_MAX}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleCreateCategory();
+                      }
+                    }}
                     onChange={(e) => setNewCategoryName(e.target.value)}
                     placeholder="Kateqoriya adı"
                     className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600"

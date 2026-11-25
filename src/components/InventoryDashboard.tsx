@@ -138,6 +138,21 @@ function formatLiveTime(date: Date): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function getRecordTimestampMs(
+  ts: Product['updatedAt'] | SaleRecord['soldAt'],
+  docId: string
+): number {
+  if (ts && typeof ts.toMillis === 'function') {
+    return ts.toMillis();
+  }
+  const match = /_(\d{13})_/.exec(docId);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
 export function InventoryDashboard({
   activeView,
   onChangeActiveView,
@@ -282,7 +297,7 @@ export function InventoryDashboard({
       now.getDate()
     ).getTime();
     for (const s of sales) {
-      const ms = s.soldAt?.toMillis?.() ?? 0;
+      const ms = getRecordTimestampMs(s.soldAt, s.id);
       if (ms >= startOfToday) {
         todaySalesRevenue += s.totalAmount;
       }
@@ -352,8 +367,8 @@ export function InventoryDashboard({
       if (sortBy === 'price_desc') {
         return b.salePrice - a.salePrice;
       }
-      const aTime = a.updatedAt?.toMillis?.() ?? 0;
-      const bTime = b.updatedAt?.toMillis?.() ?? 0;
+      const aTime = getRecordTimestampMs(a.updatedAt, a.id);
+      const bTime = getRecordTimestampMs(b.updatedAt, b.id);
       return bTime - aTime;
     });
 

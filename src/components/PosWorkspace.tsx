@@ -169,6 +169,45 @@ export function PosWorkspace({
     }
   }, [pickerOpen]);
 
+  // Keep cart item details synced with latest inventory updates (price, stock, icon, name)
+  useEffect(() => {
+    setCart((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((item) => {
+        const latest = products.find((p) => p.id === item.product.id);
+        if (
+          latest &&
+          (latest.name !== item.product.name ||
+            latest.salePrice !== item.product.salePrice ||
+            latest.quantity !== item.product.quantity ||
+            latest.icon !== item.product.icon ||
+            latest.barcode !== item.product.barcode)
+        ) {
+          changed = true;
+          return { ...item, product: latest };
+        }
+        return item;
+      });
+      return changed ? next : prev;
+    });
+  }, [products]);
+
+  // Clear stale "missing barcode" banner if that product was just added
+  useEffect(() => {
+    if (!statusBanner.missingScan) return;
+    const targetCode = statusBanner.missingScan.code.trim().toLowerCase();
+    const created = products.find(
+      (p) => p.barcode.trim().toLowerCase() === targetCode
+    );
+    if (created) {
+      setStatusBanner({
+        tone: 'ok',
+        text: `Yeni məhsul əlavə edildi: ${created.name} — artıq skan edib sata bilərsiniz.`,
+      });
+    }
+  }, [products, statusBanner.missingScan]);
+
   const addProductToCart = useCallback((product: Product) => {
     if (product.quantity <= 0) {
       setStatusBanner({
