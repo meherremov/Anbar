@@ -10,6 +10,7 @@ import {
   Printer,
   QrCode,
   Receipt,
+  RotateCcw,
   Scan,
   Search,
   Tag,
@@ -36,6 +37,8 @@ import type {
 import { triggerBrowserPrint } from '../utils/thermalPrinter';
 import { ProductThumb } from './ProductThumb';
 
+const QUICK_DISCOUNT_PERCENTS = [10, 15, 20] as const;
+
 interface PosWorkspaceProps {
   products: Product[];
   receiptSettings: ReceiptSettings;
@@ -53,6 +56,7 @@ interface PosWorkspaceProps {
   onOpenCameraScanner: () => void;
   onCreateMissingProduct: (scan?: BarcodeScanResult) => void;
   onOpenReceiptPreview: (receipt: ReceiptData) => void;
+  onOpenReturnModal: () => void;
   onReprintLatestSale?: () => void;
 }
 
@@ -113,13 +117,16 @@ export function PosWorkspace({
   onOpenCameraScanner,
   onCreateMissingProduct,
   onOpenReceiptPreview,
+  onOpenReturnModal,
   onReprintLatestSale,
 }: PosWorkspaceProps) {
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
   const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
+  const [itemDiscountModes, setItemDiscountModes] = useState<Record<string, 'percent' | 'amount'>>({});
   const [barcodeInput, setBarcodeInput] = useState<string>('');
   const [suggestionsDismissed, setSuggestionsDismissed] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [discountMode, setDiscountMode] = useState<'percent' | 'amount'>('percent');
   const [discountInput, setDiscountInput] = useState<string>('');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -229,10 +236,19 @@ export function PosWorkspace({
           return prev;
         }
         const updated = [...prev];
+        const nextQty = Math.round((curQty + 1) * 100) / 100;
+        const gross = Math.round(nextQty * product.salePrice * 100) / 100;
+        const nextDiscountAmount =
+          typeof prev[idx].discountPercent === 'number' && prev[idx].discountPercent > 0
+            ? Math.min(gross, Math.round(gross * prev[idx].discountPercent!) / 100)
+            : typeof prev[idx].discountAmount === 'number'
+            ? Math.min(gross, prev[idx].discountAmount!)
+            : undefined;
         updated[idx] = {
           ...prev[idx],
           product,
-          quantity: Math.round((curQty + 1) * 100) / 100,
+          quantity: nextQty,
+          discountAmount: nextDiscountAmount,
         };
         setStatusBanner({
           tone: 'ok',
@@ -271,6 +287,18 @@ export function PosWorkspace({
         playScanBeep();
         addProductToCart(nameMatch);
         return;
+      }
+
+      // If cashier typed a text search (non-numeric) and only 1 product matches, add it directly
+      if (scan.format === 'MANUAL' && normalized.length >= 2 && !/^\d+$/.test(normalized)) {
+        const partialMatches = productsRef.current.filter((p) =>
+          `${p.name} ${p.category}`.toLowerCase().includes(normalized)
+        );
+        if (partialMatches.length === 1) {
+          playScanBeep();
+          addProductToCart(partialMatches[0]);
+          return;
+        }
       }
 
       setStatusBanner({
@@ -315,8 +343,15 @@ export function PosWorkspace({
     if (!discountInput.trim()) return 0;
     const val = Number(discountInput);
     if (Number.isNaN(val) || val <= 0) return 0;
+    if (discountMode === 'percent') {
+      const pct = Math.min(100, val);
+      return Math.min(
+        netAfterItemDiscounts,
+        Math.round(netAfterItemDiscounts * pct) / 100
+      );
+    }
     return Math.min(netAfterItemDiscounts, Math.round(val * 100) / 100);
-  }, [discountInput, netAfterItemDiscounts]);
+  }, [discountInput, discountMode, netAfterItemDiscounts]);
 
   const payableTotal = useMemo(() => {
     return Math.max(0, Math.round((netAfterItemDiscounts - discountAmount) * 100) / 100);
@@ -332,7 +367,7 @@ export function PosWorkspace({
   const inputSuggestions = useMemo(() => {
     if (suggestionsDismissed) return [];
     const q = barcodeInput.trim().toLowerCase();
-    if (!q || q.length < 2) return [];
+    if (!q) return [];
     const exactExists = products.some((p) => p.barcode.trim().toLowerCase() === q);
     if (exactExists) return [];
     return products
@@ -381,7 +416,9 @@ export function PosWorkspace({
         );
         const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
         const clampedDiscount =
-          typeof item.discountAmount === 'number' && item.discountAmount > 0
+          typeof item.discountPercent === 'number' && item.discountPercent > 0
+            ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
+            : typeof item.discountAmount === 'number' && item.discountAmount > 0
             ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
             : undefined;
         return {
@@ -393,22 +430,53 @@ export function PosWorkspace({
     );
   };
 
+  const applyItemPercentDiscount = (productId: string, percent: number) => {
+    const targetItem = cart.find((i) => i.product.id === productId);
+    if (!targetItem) return;
+
+    if (targetItem.discountPercent === percent) {
+      clearItemDiscount(productId);
+      return;
+    }
+
+    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const clampedPct = Math.min(100, Math.max(0, Math.round(percent * 100) / 100));
+    const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId
+          ? {
+              ...item,
+              discountPercent: clampedPct > 0 ? clampedPct : undefined,
+              discountAmount: applied > 0 ? applied : undefined,
+            }
+          : item
+      )
+    );
+    setItemDiscountModes((prev) => ({ ...prev, [productId]: 'percent' }));
+    setItemDiscountDrafts((prev) => ({
+      ...prev,
+      [productId]: clampedPct > 0 ? String(clampedPct) : '',
+    }));
+    setStatusBanner({
+      tone: 'ok',
+      text:
+        applied > 0
+          ? `"${targetItem.product.name}" üçün ${clampedPct}% (-${applied.toFixed(2)} AZN) endirim tətbiq edildi.`
+          : `"${targetItem.product.name}" üzrə məhsul endirimi sıfırlandı.`,
+    });
+  };
+
   const applyItemDiscount = (productId: string) => {
     const targetItem = cart.find((i) => i.product.id === productId);
     if (!targetItem) return;
 
     const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const mode = itemDiscountModes[productId] ?? 'percent';
     const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
     if (!rawStr) {
-      setCart((prev) =>
-        prev.map((item) =>
-          item.product.id === productId ? { ...item, discountAmount: undefined } : item
-        )
-      );
-      setStatusBanner({
-        tone: 'ok',
-        text: `"${targetItem.product.name}" üzrə məhsul endirimi sıfırlandı.`,
-      });
+      clearItemDiscount(productId);
       return;
     }
 
@@ -416,7 +484,35 @@ export function PosWorkspace({
     if (Number.isNaN(val) || val < 0) {
       setStatusBanner({
         tone: 'warn',
-        text: 'Endirim məbləği 0 və ya müsbət rəqəm olmalıdır.',
+        text: 'Endirim dəyəri 0 və ya müsbət rəqəm olmalıdır.',
+      });
+      return;
+    }
+
+    if (mode === 'percent') {
+      const clampedPct = Math.min(100, Math.round(val * 100) / 100);
+      const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
+      setCart((prev) =>
+        prev.map((item) =>
+          item.product.id === productId
+            ? {
+                ...item,
+                discountPercent: clampedPct > 0 ? clampedPct : undefined,
+                discountAmount: applied > 0 ? applied : undefined,
+              }
+            : item
+        )
+      );
+      setItemDiscountDrafts((prev) => ({
+        ...prev,
+        [productId]: clampedPct > 0 ? String(clampedPct) : '',
+      }));
+      setStatusBanner({
+        tone: 'ok',
+        text:
+          applied > 0
+            ? `"${targetItem.product.name}" üçün ${clampedPct}% (-${applied.toFixed(2)} AZN) endirim tətbiq edildi.`
+            : `"${targetItem.product.name}" üzrə məhsul endirimi sıfırlandı.`,
       });
       return;
     }
@@ -425,7 +521,11 @@ export function PosWorkspace({
     setCart((prev) =>
       prev.map((item) =>
         item.product.id === productId
-          ? { ...item, discountAmount: applied > 0 ? applied : undefined }
+          ? {
+              ...item,
+              discountPercent: undefined,
+              discountAmount: applied > 0 ? applied : undefined,
+            }
           : item
       )
     );
@@ -446,7 +546,9 @@ export function PosWorkspace({
     const targetItem = cart.find((i) => i.product.id === productId);
     setCart((prev) =>
       prev.map((item) =>
-        item.product.id === productId ? { ...item, discountAmount: undefined } : item
+        item.product.id === productId
+          ? { ...item, discountAmount: undefined, discountPercent: undefined }
+          : item
       )
     );
     setItemDiscountDrafts((prev) => {
@@ -470,11 +572,18 @@ export function PosWorkspace({
       delete next[productId];
       return next;
     });
+    setItemDiscountModes((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
   };
 
   const handleClearCart = useCallback(() => {
     setCart([]);
     setItemDiscountDrafts({});
+    setItemDiscountModes({});
     setDiscountInput('');
     setCashReceivedInput('');
     setBarcodeInput('');
@@ -607,6 +716,9 @@ export function PosWorkspace({
       } else if (e.key === 'F5') {
         e.preventDefault();
         if (!pickerOpen) handleClearCart();
+      } else if (e.key === 'F6') {
+        e.preventDefault();
+        if (!pickerOpen) onOpenReturnModal();
       } else if (e.key === 'F7') {
         e.preventDefault();
         if (!pickerOpen) {
@@ -643,6 +755,7 @@ export function PosWorkspace({
     hasBlockingModal,
     pickerOpen,
     handleClearCart,
+    onOpenReturnModal,
     handlePrintAction,
     handleConfirmPayment,
   ]);
@@ -665,7 +778,7 @@ export function PosWorkspace({
                   setBarcodeInput(e.target.value);
                   setSuggestionsDismissed(false);
                 }}
-                placeholder="Barkodu oxudun..."
+                placeholder="Barkodu oxudun və ya məhsulun adını yazın..."
                 aria-label="Barkodu oxudun və ya məhsul axtarın"
                 className="w-full py-3 bg-transparent text-sm sm:text-base font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none"
               />
@@ -795,9 +908,14 @@ export function PosWorkspace({
                         0,
                         Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
                       );
+                      const discountModeForItem = itemDiscountModes[item.product.id] ?? 'percent';
                       const draftValue =
                         itemDiscountDrafts[item.product.id] ??
-                        (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
+                        (typeof item.discountPercent === 'number' && discountModeForItem === 'percent'
+                          ? String(item.discountPercent)
+                          : appliedItemDiscount > 0 && discountModeForItem === 'amount'
+                          ? appliedItemDiscount.toFixed(2)
+                          : '');
                       return (
                         <tr
                           key={item.product.id}
@@ -824,7 +942,9 @@ export function PosWorkspace({
                                     <span>(BAR: {item.product.barcode})</span>
                                     {appliedItemDiscount > 0 ? (
                                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-sans font-semibold text-[11px]">
-                                        -{appliedItemDiscount.toFixed(2)} AZN endirim
+                                        {typeof item.discountPercent === 'number'
+                                          ? `-${item.discountPercent}% (-${appliedItemDiscount.toFixed(2)} AZN)`
+                                          : `-${appliedItemDiscount.toFixed(2)} AZN endirim`}
                                         <button
                                           type="button"
                                           onClick={() => clearItemDiscount(item.product.id)}
@@ -838,30 +958,65 @@ export function PosWorkspace({
                                   </div>
                                 </div>
 
-                                {/* Per-Item Discount Box & Button */}
+                                {/* Per-Item Quick Percentage Buttons (10%, 15%, 20%) + Custom % / AZN */}
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max={grossLineTotal}
-                                    step="0.01"
-                                    value={draftValue}
-                                    onChange={(e) =>
-                                      setItemDiscountDrafts((prev) => ({
-                                        ...prev,
-                                        [item.product.id]: e.target.value,
-                                      }))
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        applyItemDiscount(item.product.id);
+                                  {QUICK_DISCOUNT_PERCENTS.map((pct) => {
+                                    const active = item.discountPercent === pct;
+                                    return (
+                                      <button
+                                        key={pct}
+                                        type="button"
+                                        onClick={() => applyItemPercentDiscount(item.product.id, pct)}
+                                        className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors cursor-pointer ${
+                                          active
+                                            ? 'bg-[#1976F3] text-white border-[#1976F3]'
+                                            : 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-800'
+                                        }`}
+                                      >
+                                        {pct}%
+                                      </button>
+                                    );
+                                  })}
+
+                                  <div className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-hidden">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
+                                      step="0.01"
+                                      value={draftValue}
+                                      onChange={(e) =>
+                                        setItemDiscountDrafts((prev) => ({
+                                          ...prev,
+                                          [item.product.id]: e.target.value,
+                                        }))
                                       }
-                                    }}
-                                    placeholder="Endirim (AZN)"
-                                    aria-label={`${item.product.name} üçün endirim məbləği`}
-                                    className="w-28 px-2 py-1 text-xs font-mono tabular-nums rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-                                  />
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          applyItemDiscount(item.product.id);
+                                        }
+                                      }}
+                                      placeholder={discountModeForItem === 'percent' ? 'Faiz %' : 'AZN'}
+                                      aria-label={`${item.product.name} üçün endirim`}
+                                      className="w-18 px-2 py-1 text-xs font-mono tabular-nums bg-transparent text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setItemDiscountModes((prev) => ({
+                                          ...prev,
+                                          [item.product.id]:
+                                            discountModeForItem === 'percent' ? 'amount' : 'percent',
+                                        }))
+                                      }
+                                      className="px-2 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-700 hover:bg-slate-200/70 dark:hover:bg-slate-800 cursor-pointer"
+                                      title="Faiz (%) və ya Manat (₼) arası dəyiş"
+                                    >
+                                      {discountModeForItem === 'percent' ? '%' : '₼'}
+                                    </button>
+                                  </div>
+
                                   <button
                                     type="button"
                                     onClick={() => applyItemDiscount(item.product.id)}
@@ -959,9 +1114,14 @@ export function PosWorkspace({
                     0,
                     Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
                   );
+                  const discountModeForItem = itemDiscountModes[item.product.id] ?? 'percent';
                   const draftValue =
                     itemDiscountDrafts[item.product.id] ??
-                    (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
+                    (typeof item.discountPercent === 'number' && discountModeForItem === 'percent'
+                      ? String(item.discountPercent)
+                      : appliedItemDiscount > 0 && discountModeForItem === 'amount'
+                      ? appliedItemDiscount.toFixed(2)
+                      : '');
                   return (
                     <div key={item.product.id} className="p-4 space-y-2.5">
                       <div className="flex items-start justify-between gap-3">
@@ -992,30 +1152,65 @@ export function PosWorkspace({
                         </button>
                       </div>
 
-                      {/* Mobile Per-Item Discount Box & Button */}
+                      {/* Mobile Per-Item Quick Percentages (10%, 15%, 20%) + Custom % / AZN */}
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <input
-                          type="number"
-                          min="0"
-                          max={grossLineTotal}
-                          step="0.01"
-                          value={draftValue}
-                          onChange={(e) =>
-                            setItemDiscountDrafts((prev) => ({
-                              ...prev,
-                              [item.product.id]: e.target.value,
-                            }))
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              applyItemDiscount(item.product.id);
+                        {QUICK_DISCOUNT_PERCENTS.map((pct) => {
+                          const active = item.discountPercent === pct;
+                          return (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => applyItemPercentDiscount(item.product.id, pct)}
+                              className={`px-2.5 py-1.5 text-xs font-bold rounded-md border transition-colors cursor-pointer ${
+                                active
+                                  ? 'bg-[#1976F3] text-white border-[#1976F3]'
+                                  : 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              {pct}%
+                            </button>
+                          );
+                        })}
+
+                        <div className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-hidden">
+                          <input
+                            type="number"
+                            min="0"
+                            max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
+                            step="0.01"
+                            value={draftValue}
+                            onChange={(e) =>
+                              setItemDiscountDrafts((prev) => ({
+                                ...prev,
+                                [item.product.id]: e.target.value,
+                              }))
                             }
-                          }}
-                          placeholder="Endirim (AZN)"
-                          aria-label={`${item.product.name} üçün endirim məbləği`}
-                          className="w-28 px-2.5 py-1.5 text-xs font-mono tabular-nums rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-                        />
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                applyItemDiscount(item.product.id);
+                              }
+                            }}
+                            placeholder={discountModeForItem === 'percent' ? 'Faiz %' : 'AZN'}
+                            aria-label={`${item.product.name} üçün endirim`}
+                            className="w-18 px-2 py-1.5 text-xs font-mono tabular-nums bg-transparent text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setItemDiscountModes((prev) => ({
+                                ...prev,
+                                [item.product.id]:
+                                  discountModeForItem === 'percent' ? 'amount' : 'percent',
+                              }))
+                            }
+                            className="px-2 py-1.5 text-xs font-bold text-slate-600 dark:text-slate-300 border-l border-slate-200 dark:border-slate-700 cursor-pointer"
+                            title="Faiz (%) və ya Manat (₼) arası dəyiş"
+                          >
+                            {discountModeForItem === 'percent' ? '%' : '₼'}
+                          </button>
+                        </div>
+
                         <button
                           type="button"
                           onClick={() => applyItemDiscount(item.product.id)}
@@ -1030,7 +1225,11 @@ export function PosWorkspace({
                             onClick={() => clearItemDiscount(item.product.id)}
                             className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded-md cursor-pointer"
                           >
-                            <span>-{appliedItemDiscount.toFixed(2)} AZN</span>
+                            <span>
+                              {typeof item.discountPercent === 'number'
+                                ? `-${item.discountPercent}% (-${appliedItemDiscount.toFixed(2)} ₼)`
+                                : `-${appliedItemDiscount.toFixed(2)} AZN`}
+                            </span>
                             <X className="w-3 h-3" />
                           </button>
                         ) : null}
@@ -1081,15 +1280,15 @@ export function PosWorkspace({
           )}
         </div>
 
-        {/* Three Colorful Quick Action Cards (F2, F5, F8) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+        {/* Four Colorful Quick Action Cards (F2, F5, F6, F8) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
           <button
             type="button"
             onClick={() => setPickerOpen(true)}
-            className="bg-[#1976F3] hover:bg-[#1565D8] text-white rounded-xl py-4 px-4 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="bg-[#1976F3] hover:bg-[#1565D8] text-white rounded-xl py-4 px-3 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <Plus className="w-6 h-6 stroke-[2.5]" />
-            <span className="text-sm sm:text-base font-bold leading-tight">
+            <span className="text-sm sm:text-base font-bold leading-tight text-center">
               Məhsul Əlavə Et
             </span>
             <span className="text-xs font-medium text-blue-100">(F2)</span>
@@ -1098,10 +1297,10 @@ export function PosWorkspace({
           <button
             type="button"
             onClick={handleClearCart}
-            className="bg-[#05A660] hover:bg-[#048C50] text-white rounded-xl py-4 px-4 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="bg-[#05A660] hover:bg-[#048C50] text-white rounded-xl py-4 px-3 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <Trash2 className="w-6 h-6" />
-            <span className="text-sm sm:text-base font-bold leading-tight">
+            <span className="text-sm sm:text-base font-bold leading-tight text-center">
               Səbəti Təmizlə
             </span>
             <span className="text-xs font-medium text-emerald-100">(F5)</span>
@@ -1109,11 +1308,23 @@ export function PosWorkspace({
 
           <button
             type="button"
+            onClick={onOpenReturnModal}
+            className="bg-[#D97706] hover:bg-[#B45309] text-white rounded-xl py-4 px-3 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-6 h-6" />
+            <span className="text-sm sm:text-base font-bold leading-tight text-center">
+              Mal Qaytar
+            </span>
+            <span className="text-xs font-medium text-amber-100">(F6)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handlePrintAction}
-            className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white rounded-xl py-4 px-4 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white rounded-xl py-4 px-3 shadow-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <Printer className="w-6 h-6" />
-            <span className="text-sm sm:text-base font-bold leading-tight">
+            <span className="text-sm sm:text-base font-bold leading-tight text-center">
               Çap Et
             </span>
             <span className="text-xs font-medium text-violet-100">(F8)</span>
@@ -1187,27 +1398,73 @@ export function PosWorkspace({
               </div>
             ) : null}
 
-            <div className="px-4 py-3 flex items-center justify-between gap-2">
-              <label
-                htmlFor="pos-discount-input"
-                className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300"
-              >
-                <Tag className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                <span>{itemsDiscountTotal > 0 ? 'Əlavə endirim:' : 'Endirim:'}</span>
-              </label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  id="pos-discount-input"
-                  type="number"
-                  min="0"
-                  max={netAfterItemDiscounts}
-                  step="0.01"
-                  value={discountInput}
-                  onChange={(e) => setDiscountInput(e.target.value)}
-                  placeholder="0.00"
-                  className="w-20 text-right px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold tabular-nums text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-                />
-                <span className="font-bold text-slate-800 dark:text-slate-200">AZN</span>
+            <div className="px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="pos-discount-input"
+                  className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  <Tag className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+                  <span>{itemsDiscountTotal > 0 ? 'Əlavə endirim:' : 'Endirim:'}</span>
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    id="pos-discount-input"
+                    type="number"
+                    min="0"
+                    max={discountMode === 'percent' ? 100 : netAfterItemDiscounts}
+                    step="0.01"
+                    value={discountInput}
+                    onChange={(e) => setDiscountInput(e.target.value)}
+                    placeholder="0"
+                    className="w-18 text-right px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold tabular-nums text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiscountMode((m) => (m === 'percent' ? 'amount' : 'percent'));
+                      setDiscountInput('');
+                    }}
+                    className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer"
+                    title="Faiz (%) və ya Manat (AZN) seç"
+                  >
+                    {discountMode === 'percent' ? '%' : 'AZN'}
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  {QUICK_DISCOUNT_PERCENTS.map((pct) => {
+                    const active =
+                      discountMode === 'percent' && discountInput.trim() === String(pct);
+                    return (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => {
+                          if (active) {
+                            setDiscountInput('');
+                          } else {
+                            setDiscountMode('percent');
+                            setDiscountInput(String(pct));
+                          }
+                        }}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-md border transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-[#1976F3] text-white border-[#1976F3]'
+                            : 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    );
+                  })}
+                </div>
+                {discountAmount > 0 ? (
+                  <span className="text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                    -{discountAmount.toFixed(2)} AZN
+                  </span>
+                ) : null}
               </div>
             </div>
 

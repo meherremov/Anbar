@@ -112,6 +112,10 @@ export function formatPaymentMethodLabel(method?: PaymentMethod): string {
   }
 }
 
+export const RETURN_LIMITS = {
+  REASON_MAX: 160,
+} as const;
+
 export interface SaleRecord {
   id: string;
   productId: string;
@@ -128,6 +132,20 @@ export interface SaleRecord {
   paymentMethod?: PaymentMethod;
   cashierEmail?: string;
   soldAt: Timestamp | null;
+  returnedQuantity?: number;
+  returnedAmount?: number;
+  returnReason?: string;
+  returnedAt?: Timestamp | null;
+}
+
+export function getNetSaleQuantity(sale: SaleRecord): number {
+  const returned = typeof sale.returnedQuantity === 'number' ? sale.returnedQuantity : 0;
+  return Math.max(0, Math.round((sale.quantity - returned) * 100) / 100);
+}
+
+export function getNetSaleAmount(sale: SaleRecord): number {
+  const returned = typeof sale.returnedAmount === 'number' ? sale.returnedAmount : 0;
+  return Math.max(0, Math.round((sale.totalAmount - returned) * 100) / 100);
 }
 
 export const RECEIPT_LIMITS = {
@@ -164,6 +182,7 @@ export interface CheckoutCartItem {
   product: Product;
   quantity: number;
   discountAmount?: number;
+  discountPercent?: number;
 }
 
 export interface ReceiptLineItem {

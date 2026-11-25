@@ -15,7 +15,7 @@ import {
   writeBatch,
   type FieldValue,
 } from 'firebase/firestore';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthScreen } from './components/AuthScreen';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -26,6 +26,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { ProductDrawer } from './components/ProductDrawer';
 import { ReceiptPreviewModal } from './components/ReceiptPreviewModal';
 import { ReceiptSettingsModal } from './components/ReceiptSettingsModal';
+import { ReturnSaleModal } from './components/ReturnSaleModal';
 import { SaleModal } from './components/SaleModal';
 import {
   auth,
@@ -48,6 +49,7 @@ import {
   type ReceiptLineItem,
   type ReceiptSettings,
   type SaleRecord,
+  type StationeryIconId,
 } from './types/inventory';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import type { ValidatedProductPayload } from './utils/barcodeDecoder';
@@ -141,6 +143,8 @@ function MainApp() {
   productsRef.current = products;
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [sales, setSales] = useState<SaleRecord[]>([]);
+  const salesRef = useRef<SaleRecord[]>(sales);
+  salesRef.current = sales;
   const [authorizedUsers, setAuthorizedUsers] = useState<AuthorizedUser[]>([]);
   const [receiptSettings, setReceiptSettings] = useState<ReceiptSettings>(
     DEFAULT_RECEIPT_SETTINGS
@@ -162,11 +166,17 @@ function MainApp() {
   const [scannerTab, setScannerTab] = useState<'camera' | 'gallery'>('camera');
   const [scannerTarget, setScannerTarget] = useState<'lookup' | 'field' | 'pos'>('lookup');
 
-  // Sale & Receipt modals state
+  // Sale, Return & Receipt modals state
   const [saleOpen, setSaleOpen] = useState<boolean>(false);
+  const [returnModalOpen, setReturnModalOpen] = useState<boolean>(false);
+  const [returnTargetSale, setReturnTargetSale] = useState<SaleRecord | null>(null);
   const [receiptSettingsOpen, setReceiptSettingsOpen] = useState<boolean>(false);
   const [reprintReceipt, setReprintReceipt] = useState<ReceiptData | null>(null);
   const [externalSaleScan, setExternalSaleScan] = useState<{
+    seq: number;
+    scan: BarcodeScanResult;
+  } | null>(null);
+  const [externalReturnScan, setExternalReturnScan] = useState<{
     seq: number;
     scan: BarcodeScanResult;
   } | null>(null);
@@ -405,6 +415,13 @@ function MainApp() {
             cashierEmail:
               typeof data.cashierEmail === 'string' ? data.cashierEmail : undefined,
             soldAt: data.soldAt || null,
+            returnedQuantity:
+              typeof data.returnedQuantity === 'number' ? data.returnedQuantity : undefined,
+            returnedAmount:
+              typeof data.returnedAmount === 'number' ? data.returnedAmount : undefined,
+            returnReason:
+              typeof data.returnReason === 'string' ? data.returnReason : undefined,
+            returnedAt: data.returnedAt || null,
           };
         });
         setSales(list);
@@ -1082,6 +1099,251 @@ function MainApp() {
     [user, showNotice]
   );
 
+  const handleReturnSale = useCallback(
+    async (
+      sale: SaleRecord,
+      returnQuantity: number,
+      reason?: string
+    ): Promise<{ stockRestored: boolean }> => {
+      if (!user) {
+        throw new Error('İstifadəçi sessiyası tapılmadı.');
+      }
+      const cleanQty = Math.round(returnQuantity * 100) / 100;
+      if (cleanQty <= 0) {
+        throw new Error('Qaytarılacaq miqdar 0-dan böyük olmalıdır.');
+      }
+      const trimmedReason = reason?.trim().slice(0, 160) || '';
+      const pathHint = `sales/${sale.id}:return`;
+
+      const computeReturnTotals = (
+        origQty: number,
+        origTotal: number,
+        prevReturnedQty: number,
+        prevReturnedAmt: number
+      ) => {
+        const remainingQty = Math.max(
+          0,
+          Math.round((origQty - prevReturnedQty) * 100) / 100
+        );
+        if (cleanQty > remainingQty + 0.0001) {
+          throw new Error(
+            `Maksimum qaytarıla bilən miqdar: ${remainingQty} ${sale.unit}`
+          );
+        }
+        const nextReturnedQty = Math.min(
+          origQty,
+          Math.round((prevReturnedQty + cleanQty) * 100) / 100
+        );
+        const isFullReturn = nextReturnedQty >= origQty - 0.0001;
+        const finalReturnedQty = isFullReturn ? origQty : nextReturnedQty;
+        const nextReturnedAmount = isFullReturn
+          ? Math.round(origTotal * 100) / 100
+          : Math.min(
+              Math.round(origTotal * 100) / 100,
+              Math.round(
+                (prevReturnedAmt + (cleanQty / origQty) * origTotal) * 100
+              ) / 100
+            );
+        return {
+          nextReturnedQty: finalReturnedQty,
+          nextReturnedAmount,
+        };
+      };
+
+      const executeOfflineReturn = async (): Promise<{ stockRestored: boolean }> => {
+        const saleRef = doc(db, 'sales', sale.id);
+        let saleData: Record<string, unknown> | null = null;
+        try {
+          const cachedSaleSnap = await getDocFromCache(saleRef);
+          if (cachedSaleSnap.exists()) {
+            saleData = cachedSaleSnap.data() as Record<string, unknown>;
+          }
+        } catch {
+          // Fall back to live state
+        }
+        if (!saleData) {
+          const localSale = salesRef.current.find((s) => s.id === sale.id);
+          if (localSale) {
+            saleData = {
+              ownerId: localSale.ownerId,
+              productId: localSale.productId,
+              quantity: localSale.quantity,
+              totalAmount: localSale.totalAmount,
+              returnedQuantity: localSale.returnedQuantity,
+              returnedAmount: localSale.returnedAmount,
+            };
+          }
+        }
+        if (!saleData) {
+          throw new Error('Satış qeydi bazada tapılmadı.');
+        }
+        if (saleData.ownerId !== user.uid) {
+          throw new Error('Bu satış qeydi sizin hesabınıza aid deyil.');
+        }
+
+        const origQty = Number(saleData.quantity ?? sale.quantity);
+        const origTotal = Number(saleData.totalAmount ?? sale.totalAmount);
+        const prevReturnedQty =
+          typeof saleData.returnedQuantity === 'number'
+            ? saleData.returnedQuantity
+            : 0;
+        const prevReturnedAmt =
+          typeof saleData.returnedAmount === 'number'
+            ? saleData.returnedAmount
+            : 0;
+
+        const { nextReturnedQty, nextReturnedAmount } = computeReturnTotals(
+          origQty,
+          origTotal,
+          prevReturnedQty,
+          prevReturnedAmt
+        );
+
+        const productId = String(saleData.productId || sale.productId);
+        const productRef = doc(db, 'products', productId);
+        let productData: Record<string, unknown> | null = null;
+        try {
+          const cachedProdSnap = await getDocFromCache(productRef);
+          if (cachedProdSnap.exists()) {
+            productData = cachedProdSnap.data() as Record<string, unknown>;
+          }
+        } catch {
+          // Fall back to live productsRef
+        }
+        if (!productData) {
+          const localProd = productsRef.current.find((p) => p.id === productId);
+          if (localProd) {
+            productData = {
+              ownerId: localProd.ownerId,
+              quantity: localProd.quantity,
+            };
+          }
+        }
+
+        const batch = writeBatch(db);
+        const saleUpdate: Record<string, unknown> = {
+          returnedQuantity: nextReturnedQty,
+          returnedAmount: nextReturnedAmount,
+          returnedAt: serverTimestamp(),
+        };
+        if (trimmedReason) {
+          saleUpdate.returnReason = trimmedReason;
+        }
+        batch.update(saleRef, saleUpdate);
+
+        let stockRestored = false;
+        if (productData && productData.ownerId === user.uid) {
+          const currentQty = Number(productData.quantity ?? 0);
+          const nextProdQty = Math.round((currentQty + cleanQty) * 100) / 100;
+          batch.update(productRef, {
+            quantity: nextProdQty,
+            updatedAt: serverTimestamp(),
+          });
+          stockRestored = true;
+        }
+
+        const commitMode = await runOfflineSafeWrite(
+          () => batch.commit(),
+          OperationType.UPDATE,
+          pathHint
+        );
+        showNotice(
+          commitMode === 'offline'
+            ? `Qaytarma oflayn qeydə alındı: ${sale.productName} (+${cleanQty} ${sale.unit})`
+            : stockRestored
+            ? `Qaytarma tamamlandı: ${sale.productName} · anbara +${cleanQty} ${sale.unit} əlavə edildi`
+            : `Qaytarma tamamlandı: ${sale.productName} (məhsul anbardan silindiyi üçün stok yenilənmədi)`
+        );
+        return { stockRestored };
+      };
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return executeOfflineReturn();
+      }
+
+      try {
+        const result = await runTransaction(db, async (transaction) => {
+          const saleRef = doc(db, 'sales', sale.id);
+          const saleSnap = await transaction.get(saleRef);
+          if (!saleSnap.exists()) {
+            throw new Error('Satış qeydi bazada tapılmadı.');
+          }
+          const saleData = saleSnap.data();
+          if (saleData.ownerId !== user.uid) {
+            throw new Error('Bu satış qeydi sizin hesabınıza aid deyil.');
+          }
+
+          const origQty = Number(saleData.quantity ?? 0);
+          const origTotal = Number(saleData.totalAmount ?? 0);
+          const prevReturnedQty =
+            typeof saleData.returnedQuantity === 'number'
+              ? saleData.returnedQuantity
+              : 0;
+          const prevReturnedAmt =
+            typeof saleData.returnedAmount === 'number'
+              ? saleData.returnedAmount
+              : 0;
+
+          const { nextReturnedQty, nextReturnedAmount } = computeReturnTotals(
+            origQty,
+            origTotal,
+            prevReturnedQty,
+            prevReturnedAmt
+          );
+
+          const productId = String(saleData.productId || sale.productId);
+          const productRef = doc(db, 'products', productId);
+          const productSnap = await transaction.get(productRef);
+
+          const saleUpdate: Record<string, unknown> = {
+            returnedQuantity: nextReturnedQty,
+            returnedAmount: nextReturnedAmount,
+            returnedAt: serverTimestamp(),
+          };
+          if (trimmedReason) {
+            saleUpdate.returnReason = trimmedReason;
+          }
+          transaction.update(saleRef, saleUpdate);
+
+          let stockRestored = false;
+          if (productSnap.exists() && productSnap.data().ownerId === user.uid) {
+            const currentQty = Number(productSnap.data().quantity ?? 0);
+            const nextProdQty = Math.round((currentQty + cleanQty) * 100) / 100;
+            transaction.update(productRef, {
+              quantity: nextProdQty,
+              updatedAt: serverTimestamp(),
+            });
+            stockRestored = true;
+          }
+
+          return { stockRestored };
+        });
+
+        showNotice(
+          result.stockRestored
+            ? `Qaytarma tamamlandı: ${sale.productName} · anbara +${cleanQty} ${sale.unit} əlavə edildi`
+            : `Qaytarma tamamlandı: ${sale.productName} (məhsul anbardan silindiyi üçün stok yenilənmədi)`
+        );
+        return result;
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes('Maksimum qaytarıla') ||
+            error.message.includes('tapılmadı') ||
+            error.message.includes('aid deyil') ||
+            error.message.includes('0-dan böyük'))
+        ) {
+          throw error;
+        }
+        if (isNetworkOrOfflineError(error)) {
+          return executeOfflineReturn();
+        }
+        handleFirestoreError(error, OperationType.UPDATE, pathHint);
+      }
+    },
+    [user, showNotice]
+  );
+
   const handleSaveReceiptSettings = useCallback(
     async (next: ReceiptSettings) => {
       if (!user) return;
@@ -1294,9 +1556,20 @@ function MainApp() {
     [scannerTarget, products, showNotice]
   );
 
+  const productIconMap = useMemo(() => {
+    const map = new Map<string, StationeryIconId>();
+    for (const p of products) {
+      if (p.icon) {
+        map.set(p.id, p.icon);
+      }
+    }
+    return map;
+  }, [products]);
+
   const hasAnyBlockingModal = Boolean(
     scannerOpen ||
       saleOpen ||
+      returnModalOpen ||
       drawerOpen ||
       receiptSettingsOpen ||
       reprintReceipt ||
@@ -1315,6 +1588,14 @@ function MainApp() {
 
       if (saleOpen) {
         setExternalSaleScan((prev) => ({
+          seq: (prev?.seq ?? 0) + 1,
+          scan: result,
+        }));
+        return;
+      }
+
+      if (returnModalOpen) {
+        setExternalReturnScan((prev) => ({
           seq: (prev?.seq ?? 0) + 1,
           scan: result,
         }));
@@ -1351,6 +1632,7 @@ function MainApp() {
     [
       scannerOpen,
       saleOpen,
+      returnModalOpen,
       drawerOpen,
       activeView,
       receiptSettingsOpen,
@@ -1435,6 +1717,10 @@ function MainApp() {
           setScannerOpen(true);
         }}
         onOpenSale={() => setSaleOpen(true)}
+        onOpenReturnModal={(sale) => {
+          setReturnTargetSale(sale ?? null);
+          setReturnModalOpen(true);
+        }}
         onConfirmCheckout={handleConfirmCheckout}
         onCreateMissingProductFromPos={(scan) => {
           setEditingProduct(null);
@@ -1516,6 +1802,19 @@ function MainApp() {
           setDrawerOpen(true);
         }}
         onOpenReceiptSettings={() => setReceiptSettingsOpen(true)}
+      />
+
+      <ReturnSaleModal
+        isOpen={returnModalOpen}
+        initialSale={returnTargetSale}
+        sales={sales}
+        productIconMap={productIconMap}
+        externalScan={externalReturnScan}
+        onClose={() => {
+          setReturnModalOpen(false);
+          setReturnTargetSale(null);
+        }}
+        onConfirmReturn={handleReturnSale}
       />
 
       <ReceiptPreviewModal

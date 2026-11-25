@@ -204,7 +204,17 @@ export function ProductDrawer({
     e.preventDefault();
     setError(null);
 
-    const validation = validateAndSanitizeProduct(form);
+    let effectiveForm = form;
+    if (mode === 'create' && !form.barcode.trim()) {
+      effectiveForm = {
+        ...form,
+        barcode: generateInternalBarcode(),
+        barcodeFormat: 'INTERNAL_EAN13',
+      };
+      setForm(effectiveForm);
+    }
+
+    const validation = validateAndSanitizeProduct(effectiveForm);
     if (!validation.ok) {
       setError(validation.error);
       return;
@@ -278,7 +288,7 @@ export function ProductDrawer({
                 </p>
               ) : (
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                  Barkodu kamera və ya qalereyadan oxudub məhsulu əlavə edin
+                  Barkodu oxudun və ya barkodsuz məhsul üçün adını yazıb əlavə edin
                 </p>
               )}
             </div>
@@ -369,7 +379,15 @@ export function ProductDrawer({
 
             {form.barcode.trim() ? (
               <BarcodeGraphic code={form.barcode.trim()} format={form.barcodeFormat} />
-            ) : null}
+            ) : (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Barkodsuz məhsul üçün sahəni boş buraxın (avtomatik daxili kod yaranacaq) və ya{' '}
+                <span className="font-semibold text-blue-700 dark:text-blue-400">
+                  “Daxili kod yarat”
+                </span>{' '}
+                düyməsinə basın. Satışda məhsulu adı ilə tapıb sata bilərsiniz.
+              </p>
+            )}
 
             {duplicateProduct ? (
               <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-lg flex items-start justify-between gap-3">

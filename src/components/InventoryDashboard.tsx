@@ -39,6 +39,7 @@ import {
 import {
   DEFAULT_CATEGORIES,
   FIELD_LIMITS,
+  getNetSaleAmount,
   type ActiveView,
   type AuthorizedUser,
   type BarcodeScanResult,
@@ -84,6 +85,7 @@ interface InventoryDashboardProps {
   onOpenEditProduct: (product: Product) => void;
   onOpenQuickScanner: (tab: 'camera' | 'gallery', target?: 'lookup' | 'pos') => void;
   onOpenSale: () => void;
+  onOpenReturnModal: (sale?: SaleRecord) => void;
   onConfirmCheckout: (
     items: CheckoutCartItem[],
     options: {
@@ -175,6 +177,7 @@ export function InventoryDashboard({
   onOpenEditProduct,
   onOpenQuickScanner,
   onOpenSale,
+  onOpenReturnModal,
   onConfirmCheckout,
   onCreateMissingProductFromPos,
   onOpenReceiptPreview,
@@ -299,7 +302,7 @@ export function InventoryDashboard({
     for (const s of sales) {
       const ms = getRecordTimestampMs(s.soldAt, s.id);
       if (ms >= startOfToday) {
-        todaySalesRevenue += s.totalAmount;
+        todaySalesRevenue += getNetSaleAmount(s);
       }
     }
 
@@ -885,6 +888,7 @@ export function InventoryDashboard({
               onOpenCameraScanner={() => onOpenQuickScanner('camera', 'pos')}
               onCreateMissingProduct={onCreateMissingProductFromPos}
               onOpenReceiptPreview={onOpenReceiptPreview}
+              onOpenReturnModal={() => onOpenReturnModal()}
               onReprintLatestSale={
                 latestSale ? () => onReprintSale(latestSale) : undefined
               }
@@ -910,6 +914,7 @@ export function InventoryDashboard({
               onOpenSaleModal={() => handleNavSelect('pos')}
               onOpenReceiptSettings={onOpenReceiptSettings}
               onReprintSale={onReprintSale}
+              onRequestReturnSale={(sale) => onOpenReturnModal(sale)}
               onRequestDeleteSale={onRequestDeleteSale}
             />
           ) : activeView === 'categories' ? (
@@ -1102,6 +1107,7 @@ export function InventoryDashboard({
                 onOpenSaleModal={() => handleNavSelect('pos')}
                 onOpenReceiptSettings={onOpenReceiptSettings}
                 onReprintSale={onReprintSale}
+                onRequestReturnSale={(sale) => onOpenReturnModal(sale)}
                 onRequestDeleteSale={onRequestDeleteSale}
               />
             </>

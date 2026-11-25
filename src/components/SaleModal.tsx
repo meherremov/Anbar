@@ -65,6 +65,7 @@ interface SaleModalProps {
 type InputMode = 'camera' | 'gallery' | 'manual' | 'browse';
 
 const AUTO_PRINT_STORAGE_KEY = 'ofis_anbari_auto_print_receipt';
+const QUICK_DISCOUNT_PERCENTS = [10, 15, 20] as const;
 
 function playScanBeep(): void {
   try {
@@ -103,6 +104,7 @@ export function SaleModal({
   const [inputMode, setInputMode] = useState<InputMode>('camera');
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
   const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
+  const [itemDiscountModes, setItemDiscountModes] = useState<Record<string, 'percent' | 'amount'>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
   const [autoPrintAfterSale, setAutoPrintAfterSale] = useState<boolean>(() => {
@@ -164,6 +166,7 @@ export function SaleModal({
   const resetForNewSale = useCallback(() => {
     setCart([]);
     setItemDiscountDrafts({});
+    setItemDiscountModes({});
     setPaymentMethod('cash');
     setCashReceivedInput('');
     setManualCode('');
@@ -211,10 +214,20 @@ export function SaleModal({
           return prev;
         }
         const updated = [...prev];
+        const nextQty = Math.round((currentQty + 1) * 100) / 100;
+        const gross = Math.round(nextQty * product.salePrice * 100) / 100;
+        const nextDiscountAmount =
+          typeof prev[existingIdx].discountPercent === 'number' &&
+          prev[existingIdx].discountPercent! > 0
+            ? Math.min(gross, Math.round(gross * prev[existingIdx].discountPercent!) / 100)
+            : typeof prev[existingIdx].discountAmount === 'number'
+            ? Math.min(gross, prev[existingIdx].discountAmount!)
+            : undefined;
         updated[existingIdx] = {
           ...prev[existingIdx],
           product,
-          quantity: Math.round((currentQty + 1) * 100) / 100,
+          quantity: nextQty,
+          discountAmount: nextDiscountAmount,
         };
         setScanFeedback({
           tone: 'ok',
@@ -458,7 +471,9 @@ export function SaleModal({
         );
         const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
         const clampedDiscount =
-          typeof item.discountAmount === 'number' && item.discountAmount > 0
+          typeof item.discountPercent === 'number' && item.discountPercent > 0
+            ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
+            : typeof item.discountAmount === 'number' && item.discountAmount > 0
             ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
             : undefined;
         return {
@@ -471,30 +486,85 @@ export function SaleModal({
     setSaleError(null);
   };
 
+  const applyItemPercentDiscount = (productId: string, percent: number) => {
+    const targetItem = cart.find((i) => i.product.id === productId);
+    if (!targetItem) return;
+
+    if (targetItem.discountPercent === percent) {
+      clearItemDiscount(productId);
+      return;
+    }
+
+    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const clampedPct = Math.min(100, Math.max(0, Math.round(percent * 100) / 100));
+    const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
+
+    setCart((prev) =>
+      prev.map((item) =>
+        item.product.id === productId
+          ? {
+              ...item,
+              discountPercent: clampedPct > 0 ? clampedPct : undefined,
+              discountAmount: applied > 0 ? applied : undefined,
+            }
+          : item
+      )
+    );
+    setItemDiscountModes((prev) => ({ ...prev, [productId]: 'percent' }));
+    setItemDiscountDrafts((prev) => ({
+      ...prev,
+      [productId]: clampedPct > 0 ? String(clampedPct) : '',
+    }));
+    setSaleError(null);
+  };
+
   const applyItemDiscount = (productId: string) => {
     const targetItem = cart.find((i) => i.product.id === productId);
     if (!targetItem) return;
     const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const mode = itemDiscountModes[productId] ?? 'percent';
     const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
     if (!rawStr) {
-      setCart((prev) =>
-        prev.map((item) =>
-          item.product.id === productId ? { ...item, discountAmount: undefined } : item
-        )
-      );
-      setSaleError(null);
+      clearItemDiscount(productId);
       return;
     }
     const val = Number(rawStr);
     if (Number.isNaN(val) || val < 0) {
-      setSaleError('Endirim məbləği 0 və ya müsbət rəqəm olmalıdır.');
+      setSaleError('Endirim dəyəri 0 və ya müsbət rəqəm olmalıdır.');
       return;
     }
+
+    if (mode === 'percent') {
+      const clampedPct = Math.min(100, Math.round(val * 100) / 100);
+      const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
+      setCart((prev) =>
+        prev.map((item) =>
+          item.product.id === productId
+            ? {
+                ...item,
+                discountPercent: clampedPct > 0 ? clampedPct : undefined,
+                discountAmount: applied > 0 ? applied : undefined,
+              }
+            : item
+        )
+      );
+      setItemDiscountDrafts((prev) => ({
+        ...prev,
+        [productId]: clampedPct > 0 ? String(clampedPct) : '',
+      }));
+      setSaleError(null);
+      return;
+    }
+
     const applied = Math.min(gross, Math.round(val * 100) / 100);
     setCart((prev) =>
       prev.map((item) =>
         item.product.id === productId
-          ? { ...item, discountAmount: applied > 0 ? applied : undefined }
+          ? {
+              ...item,
+              discountPercent: undefined,
+              discountAmount: applied > 0 ? applied : undefined,
+            }
           : item
       )
     );
@@ -508,7 +578,9 @@ export function SaleModal({
   const clearItemDiscount = (productId: string) => {
     setCart((prev) =>
       prev.map((item) =>
-        item.product.id === productId ? { ...item, discountAmount: undefined } : item
+        item.product.id === productId
+          ? { ...item, discountAmount: undefined, discountPercent: undefined }
+          : item
       )
     );
     setItemDiscountDrafts((prev) => {
@@ -522,6 +594,12 @@ export function SaleModal({
   const removeCartItem = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
     setItemDiscountDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setItemDiscountModes((prev) => {
       if (!(productId in prev)) return prev;
       const next = { ...prev };
       delete next[productId];
@@ -978,9 +1056,14 @@ export function SaleModal({
                         0,
                         Math.round((grossLineTotal - appliedItemDiscount) * 100) / 100
                       );
+                      const discountModeForItem = itemDiscountModes[item.product.id] ?? 'percent';
                       const draftValue =
                         itemDiscountDrafts[item.product.id] ??
-                        (appliedItemDiscount > 0 ? appliedItemDiscount.toFixed(2) : '');
+                        (typeof item.discountPercent === 'number' && discountModeForItem === 'percent'
+                          ? String(item.discountPercent)
+                          : appliedItemDiscount > 0 && discountModeForItem === 'amount'
+                          ? appliedItemDiscount.toFixed(2)
+                          : '');
                       return (
                         <div key={item.product.id} className="p-3 space-y-2">
                           <div className="flex items-start justify-between gap-2">
@@ -1013,28 +1096,62 @@ export function SaleModal({
                           </div>
 
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <input
-                              type="number"
-                              min="0"
-                              max={grossLineTotal}
-                              step="0.01"
-                              value={draftValue}
-                              onChange={(e) =>
-                                setItemDiscountDrafts((prev) => ({
-                                  ...prev,
-                                  [item.product.id]: e.target.value,
-                                }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  applyItemDiscount(item.product.id);
+                            {QUICK_DISCOUNT_PERCENTS.map((pct) => {
+                              const active = item.discountPercent === pct;
+                              return (
+                                <button
+                                  key={pct}
+                                  type="button"
+                                  onClick={() => applyItemPercentDiscount(item.product.id, pct)}
+                                  className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-colors cursor-pointer ${
+                                    active
+                                      ? 'bg-blue-600 text-white border-blue-600'
+                                      : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-800'
+                                  }`}
+                                >
+                                  {pct}%
+                                </button>
+                              );
+                            })}
+
+                            <div className="inline-flex items-center rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 overflow-hidden">
+                              <input
+                                type="number"
+                                min="0"
+                                max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
+                                step="0.01"
+                                value={draftValue}
+                                onChange={(e) =>
+                                  setItemDiscountDrafts((prev) => ({
+                                    ...prev,
+                                    [item.product.id]: e.target.value,
+                                  }))
                                 }
-                              }}
-                              placeholder="Endirim (₼)"
-                              aria-label={`${item.product.name} üçün endirim məbləği`}
-                              className="w-24 px-2 py-1 text-xs font-mono tabular-nums rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                            />
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    applyItemDiscount(item.product.id);
+                                  }
+                                }}
+                                placeholder={discountModeForItem === 'percent' ? '%' : '₼'}
+                                aria-label={`${item.product.name} üçün endirim`}
+                                className="w-16 px-2 py-1 text-xs font-mono tabular-nums bg-transparent text-slate-900 dark:text-slate-100 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setItemDiscountModes((prev) => ({
+                                    ...prev,
+                                    [item.product.id]:
+                                      discountModeForItem === 'percent' ? 'amount' : 'percent',
+                                  }))
+                                }
+                                className="px-1.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300 border-l border-slate-300 dark:border-slate-700 cursor-pointer"
+                                title="Faiz (%) və ya Manat (₼) arası dəyiş"
+                              >
+                                {discountModeForItem === 'percent' ? '%' : '₼'}
+                              </button>
+                            </div>
                             <button
                               type="button"
                               onClick={() => applyItemDiscount(item.product.id)}
@@ -1049,7 +1166,11 @@ export function SaleModal({
                                 onClick={() => clearItemDiscount(item.product.id)}
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded cursor-pointer"
                               >
-                                <span>-{appliedItemDiscount.toFixed(2)} ₼</span>
+                                <span>
+                                  {typeof item.discountPercent === 'number'
+                                    ? `-${item.discountPercent}% (-${appliedItemDiscount.toFixed(2)} ₼)`
+                                    : `-${appliedItemDiscount.toFixed(2)} ₼`}
+                                </span>
                                 <X className="w-3 h-3" />
                               </button>
                             ) : null}

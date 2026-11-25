@@ -173,7 +173,11 @@ service cloud.firestore {
           'receiptNumber',
           'paymentMethod',
           'cashierEmail',
-          'soldAt'
+          'soldAt',
+          'returnedQuantity',
+          'returnedAmount',
+          'returnReason',
+          'returnedAt'
         ])
         && isValidId(data.productId)
         && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160
@@ -190,7 +194,13 @@ service cloud.firestore {
         && isValidOptionalString(data, 'receiptNumber', 40)
         && (!('paymentMethod' in data) || data.paymentMethod in ['cash', 'card', 'c2c', 'mobile'])
         && isValidOptionalString(data, 'cashierEmail', 160)
-        && data.soldAt is timestamp;
+        && data.soldAt is timestamp
+        && isValidOptionalNonNegativeNumber(data, 'returnedQuantity')
+        && (!('returnedQuantity' in data) || data.returnedQuantity <= data.quantity)
+        && isValidOptionalNonNegativeNumber(data, 'returnedAmount')
+        && (!('returnedAmount' in data) || data.returnedAmount <= data.totalAmount)
+        && isValidOptionalString(data, 'returnReason', 160)
+        && (!('returnedAt' in data) || data.returnedAt is timestamp);
     }
 
     function isValidAuthorizedUser(data) {
@@ -277,7 +287,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Quick stock quantity adjustment or sale deduction
+          // Action 1: Quick stock quantity adjustment, sale deduction, or return restoration
           incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'updatedAt'])
           ||
           // Action 2: Full or partial product & barcode edit
@@ -345,12 +355,50 @@ service cloud.firestore {
         && isValidId(saleId)
         && isValidSale(incoming())
         && incoming().soldAt == request.time
+        && !('returnedQuantity' in incoming())
+        && !('returnedAmount' in incoming())
+        && !('returnReason' in incoming())
+        && !('returnedAt' in incoming())
         && exists(/databases/$(database)/documents/products/$(incoming().productId))
         && get(/databases/$(database)/documents/products/$(incoming().productId)).data.ownerId == request.auth.uid
         && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantity <= get(/databases/$(database)/documents/products/$(incoming().productId)).data.quantity;
 
-      allow update: if false;
+      allow update: if isAuthorizedStoreUser()
+        && isValidId(saleId)
+        && isValidSale(incoming())
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().soldAt == existing().soldAt
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'returnedQuantity',
+          'returnedAmount',
+          'returnReason',
+          'returnedAt'
+        ])
+        && ('returnedQuantity' in incoming())
+        && ('returnedAmount' in incoming())
+        && ('returnedAt' in incoming())
+        && incoming().returnedAt == request.time
+        && (
+          (!('returnedQuantity' in existing()) && incoming().returnedQuantity > 0)
+          ||
+          (('returnedQuantity' in existing())
+            && existing().returnedQuantity < existing().quantity
+            && incoming().returnedQuantity > existing().returnedQuantity)
+        )
+        && (
+          !('returnedAmount' in existing())
+          || incoming().returnedAmount >= existing().returnedAmount
+        )
+        && (
+          !exists(/databases/$(database)/documents/products/$(existing().productId))
+          || (
+            get(/databases/$(database)/documents/products/$(existing().productId)).data.ownerId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/products/$(existing().productId)).data.updatedAt == request.time
+            && getAfter(/databases/$(database)/documents/products/$(existing().productId)).data.quantity >= get(/databases/$(database)/documents/products/$(existing().productId)).data.quantity
+          )
+        );
 
       allow delete: if isAuthorizedStoreUser()
         && isValidId(saleId)

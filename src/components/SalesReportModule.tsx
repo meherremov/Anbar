@@ -2,6 +2,7 @@ import {
   ArrowRight,
   Printer,
   Receipt,
+  RotateCcw,
   Search,
   Settings2,
   ShoppingCart,
@@ -11,6 +12,8 @@ import {
 import { useMemo, useState } from 'react';
 import {
   formatPaymentMethodLabel,
+  getNetSaleAmount,
+  getNetSaleQuantity,
   type SaleRecord,
   type StationeryIconId,
 } from '../types/inventory';
@@ -25,6 +28,7 @@ interface SalesReportModuleProps {
   onOpenSaleModal: () => void;
   onOpenReceiptSettings: () => void;
   onReprintSale: (sale: SaleRecord) => void;
+  onRequestReturnSale: (sale: SaleRecord) => void;
   onRequestDeleteSale: (sale: SaleRecord) => void;
 }
 
@@ -51,6 +55,18 @@ function formatDateTime(ts: SaleRecord['soldAt']): string {
   });
 }
 
+function getSaleMs(sale: SaleRecord): number {
+  if (sale.soldAt && typeof sale.soldAt.toMillis === 'function') {
+    return sale.soldAt.toMillis();
+  }
+  const match = /_(\d{13})_/.exec(sale.id);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
 export function SalesReportModule({
   sales,
   productIconMap,
@@ -60,17 +76,14 @@ export function SalesReportModule({
   onOpenSaleModal,
   onOpenReceiptSettings,
   onReprintSale,
+  onRequestReturnSale,
   onRequestDeleteSale,
 }: SalesReportModuleProps) {
   const [period, setPeriod] = useState<PeriodFilter>('all');
   const [queryText, setQueryText] = useState<string>('');
 
   const sortedSales = useMemo(() => {
-    return [...sales].sort((a, b) => {
-      const aMs = a.soldAt?.toMillis?.() ?? Date.now();
-      const bMs = b.soldAt?.toMillis?.() ?? Date.now();
-      return bMs - aMs;
-    });
+    return [...sales].sort((a, b) => getSaleMs(b) - getSaleMs(a));
   }, [sales]);
 
   const filteredSales = useMemo(() => {
@@ -85,7 +98,7 @@ export function SalesReportModule({
     const q = queryText.trim().toLowerCase();
 
     return sortedSales.filter((sale) => {
-      const soldMs = sale.soldAt?.toMillis?.() ?? Date.now();
+      const soldMs = getSaleMs(sale);
       if (period === 'today' && soldMs < startOfToday) return false;
       if (period === 'week' && soldMs < sevenDaysAgo) return false;
       if (period === 'month' && soldMs < startOfMonth) return false;
@@ -104,14 +117,17 @@ export function SalesReportModule({
     const source = compact ? sortedSales : filteredSales;
     let totalRevenue = 0;
     let totalUnits = 0;
+    let totalReturnedAmount = 0;
     for (const s of source) {
-      totalRevenue += s.totalAmount;
-      totalUnits += s.quantity;
+      totalRevenue += getNetSaleAmount(s);
+      totalUnits += getNetSaleQuantity(s);
+      totalReturnedAmount += typeof s.returnedAmount === 'number' ? s.returnedAmount : 0;
     }
     return {
       count: source.length,
       totalUnits: Math.round(totalUnits * 100) / 100,
-      totalRevenue,
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      totalReturnedAmount: Math.round(totalReturnedAmount * 100) / 100,
     };
   }, [compact, sortedSales, filteredSales]);
 
@@ -229,10 +245,20 @@ export function SalesReportModule({
               <span className="mx-1.5" aria-hidden="true">
                 ·
               </span>
-              Cəmi gəlir:{' '}
+              Cəmi xalis gəlir:{' '}
               <span className="font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-400">
                 {formatMoney(summary.totalRevenue)}
               </span>
+              {summary.totalReturnedAmount > 0 ? (
+                <>
+                  <span className="mx-1.5" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="text-amber-700 dark:text-amber-400 font-mono tabular-nums">
+                    İadə: -{formatMoney(summary.totalReturnedAmount)}
+                  </span>
+                </>
+              ) : null}
             </p>
           </div>
 
@@ -291,133 +317,232 @@ export function SalesReportModule({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 text-sm">
-                  {filteredSales.map((sale) => (
-                    <tr
-                      key={sale.id}
-                      className="hover:bg-blue-50/35 dark:hover:bg-slate-800/50 transition-colors"
-                    >
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                          {formatDateTime(sale.soldAt)}
-                        </div>
-                        <div className="text-[11px] font-mono tabular-nums text-slate-400 dark:text-slate-500 mt-0.5">
-                          {sale.receiptNumber || 'Tək satış'}
-                          {sale.paymentMethod
-                            ? ` · ${formatPaymentMethodLabel(sale.paymentMethod)}`
-                            : ''}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 max-w-[260px]">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <ProductThumb
-                            name={sale.productName}
-                            category={sale.category}
-                            icon={productIconMap?.get(sale.productId)}
-                            sizeClassName="w-8 h-8"
-                            imgClassName="w-6 h-6"
-                          />
-                          <div className="min-w-0">
-                            <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
-                              {sale.productName}
-                            </div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                              {sale.category}
+                  {filteredSales.map((sale) => {
+                    const returnedQty = sale.returnedQuantity ?? 0;
+                    const returnedAmt = sale.returnedAmount ?? 0;
+                    const remainingQty = getNetSaleQuantity(sale);
+                    const netAmt = getNetSaleAmount(sale);
+                    const isFullyReturned = remainingQty <= 0;
+                    return (
+                      <tr
+                        key={sale.id}
+                        className="hover:bg-blue-50/35 dark:hover:bg-slate-800/50 transition-colors"
+                      >
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="text-xs font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                            {formatDateTime(sale.soldAt)}
+                          </div>
+                          <div className="text-[11px] font-mono tabular-nums text-slate-400 dark:text-slate-500 mt-0.5">
+                            {sale.receiptNumber || 'Tək satış'}
+                            {sale.paymentMethod
+                              ? ` · ${formatPaymentMethodLabel(sale.paymentMethod)}`
+                              : ''}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 max-w-[260px]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ProductThumb
+                              name={sale.productName}
+                              category={sale.category}
+                              icon={productIconMap?.get(sale.productId)}
+                              sizeClassName="w-8 h-8"
+                              imgClassName="w-6 h-6"
+                            />
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                                {sale.productName}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                {sale.category}
+                              </div>
+                              {returnedQty > 0 ? (
+                                <div className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400 truncate">
+                                  {isFullyReturned
+                                    ? 'Tam qaytarılıb'
+                                    : `Qaytarılıb: ${returnedQty} ${sale.unit}`}
+                                  {sale.returnReason ? ` · ${sale.returnReason}` : ''}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 font-mono tabular-nums text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                        {sale.barcode}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-xs font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                        {sale.quantity} {sale.unit}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                        {formatMoney(sale.unitPrice)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
-                        {formatMoney(sale.totalAmount)}
-                      </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => onReprintSale(sale)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/60 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer"
-                            title="Çeki aç və çap et"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>Çek</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onRequestDeleteSale(sale)}
-                            className="p-1.5 text-slate-400 hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg cursor-pointer"
-                            aria-label="Satış qeydini sil"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3 px-4 font-mono tabular-nums text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                          {sale.barcode}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono tabular-nums text-xs font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                          {returnedQty > 0 ? (
+                            <div>
+                              <div className="line-through text-slate-400">
+                                {sale.quantity} {sale.unit}
+                              </div>
+                              <div>
+                                {remainingQty} {sale.unit}
+                              </div>
+                            </div>
+                          ) : (
+                            `${sale.quantity} ${sale.unit}`
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                          {formatMoney(sale.unitPrice)}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold whitespace-nowrap">
+                          {returnedAmt > 0 ? (
+                            <div>
+                              <div className="text-[11px] font-normal text-slate-400 line-through">
+                                {formatMoney(sale.totalAmount)}
+                              </div>
+                              <div
+                                className={
+                                  isFullyReturned
+                                    ? 'text-slate-400 dark:text-slate-500'
+                                    : 'text-emerald-700 dark:text-emerald-400'
+                                }
+                              >
+                                {formatMoney(netAmt)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-emerald-700 dark:text-emerald-400">
+                              {formatMoney(sale.totalAmount)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            {remainingQty > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => onRequestReturnSale(sale)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 rounded-lg cursor-pointer"
+                                title="Malı qaytar və stoku bərpa et"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>Qaytar</span>
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => onReprintSale(sale)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/60 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer"
+                              title="Çeki aç və çap et"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Çek</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onRequestDeleteSale(sale)}
+                              className="p-1.5 text-slate-400 hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg cursor-pointer"
+                              aria-label="Satış qeydini sil"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Mobile List */}
             <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredSales.map((sale) => (
-                <div key={sale.id} className="p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <ProductThumb
-                        name={sale.productName}
-                        category={sale.category}
-                        icon={productIconMap?.get(sale.productId)}
-                        sizeClassName="w-9 h-9"
-                        imgClassName="w-7 h-7"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-                          {sale.productName}
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          {sale.category} ·{' '}
-                          <span className="font-mono tabular-nums">{sale.barcode}</span>
+              {filteredSales.map((sale) => {
+                const returnedQty = sale.returnedQuantity ?? 0;
+                const returnedAmt = sale.returnedAmount ?? 0;
+                const remainingQty = getNetSaleQuantity(sale);
+                const netAmt = getNetSaleAmount(sale);
+                const isFullyReturned = remainingQty <= 0;
+                return (
+                  <div key={sale.id} className="p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <ProductThumb
+                          name={sale.productName}
+                          category={sale.category}
+                          icon={productIconMap?.get(sale.productId)}
+                          sizeClassName="w-9 h-9"
+                          imgClassName="w-7 h-7"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                            {sale.productName}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            {sale.category} ·{' '}
+                            <span className="font-mono tabular-nums">{sale.barcode}</span>
+                          </div>
+                          {returnedQty > 0 ? (
+                            <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mt-0.5">
+                              {isFullyReturned
+                                ? 'Tam qaytarılıb'
+                                : `Qaytarılıb: ${returnedQty} ${sale.unit}`}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
+                      <div className="font-mono tabular-nums text-sm font-semibold whitespace-nowrap text-right">
+                        {returnedAmt > 0 ? (
+                          <div>
+                            <div className="text-[11px] font-normal text-slate-400 line-through">
+                              {formatMoney(sale.totalAmount)}
+                            </div>
+                            <div
+                              className={
+                                isFullyReturned
+                                  ? 'text-slate-400 dark:text-slate-500'
+                                  : 'text-emerald-700 dark:text-emerald-400'
+                              }
+                            >
+                              {formatMoney(netAmt)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            {formatMoney(sale.totalAmount)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="font-mono tabular-nums text-sm font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
-                      {formatMoney(sale.totalAmount)}
+                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                      <span className="font-mono tabular-nums truncate">
+                        {formatDateTime(sale.soldAt)} · {remainingQty} {sale.unit}
+                        {sale.receiptNumber ? ` · ${sale.receiptNumber}` : ''}
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {remainingQty > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => onRequestReturnSale(sale)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded cursor-pointer"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Qaytar</span>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => onReprintSale(sale)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 rounded cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Çek</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onRequestDeleteSale(sale)}
+                          className="p-1 text-slate-400 hover:text-red-700 dark:hover:text-red-400 cursor-pointer"
+                          aria-label="Satış qeydini sil"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    <span className="font-mono tabular-nums truncate">
-                      {formatDateTime(sale.soldAt)} · {sale.quantity} {sale.unit}
-                      {sale.receiptNumber ? ` · ${sale.receiptNumber}` : ''}
-                    </span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => onReprintSale(sale)}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 rounded cursor-pointer"
-                      >
-                        <Printer className="w-3.5 h-3.5" />
-                        <span>Çek</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onRequestDeleteSale(sale)}
-                        className="p-1 text-slate-400 hover:text-red-700 dark:hover:text-red-400 cursor-pointer"
-                        aria-label="Satış qeydini sil"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

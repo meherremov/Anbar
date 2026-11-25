@@ -224,6 +224,24 @@
           "type": "string",
           "format": "date-time",
           "description": "Server timestamp of the sale."
+        },
+        "returnedQuantity": {
+          "type": "number",
+          "description": "Optional cumulative quantity returned from this sale line item (0 <= returnedQuantity <= quantity)."
+        },
+        "returnedAmount": {
+          "type": "number",
+          "description": "Optional cumulative refunded amount in AZN (0 <= returnedAmount <= totalAmount)."
+        },
+        "returnReason": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional reason or note for the product return."
+        },
+        "returnedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional server timestamp of the most recent return on this sale."
         }
       },
       "required": [
