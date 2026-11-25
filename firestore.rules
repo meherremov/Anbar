@@ -354,6 +354,7 @@ service cloud.firestore {
       allow create: if isAuthorizedStoreUser()
         && isValidId(saleId)
         && isValidSale(incoming())
+        && (!('paymentMethod' in incoming()) || incoming().paymentMethod in ['cash', 'card', 'mobile'])
         && incoming().soldAt == request.time
         && !('returnedQuantity' in incoming())
         && !('returnedAmount' in incoming())

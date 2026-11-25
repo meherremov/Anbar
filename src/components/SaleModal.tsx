@@ -1238,7 +1238,7 @@ export function SaleModal({
 
               {/* Payment & Checkout Footer */}
               <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg">
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('cash')}
@@ -1249,20 +1249,6 @@ export function SaleModal({
                     }`}
                   >
                     Nağd ödəniş
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethod('c2c');
-                      setCashReceivedInput('');
-                    }}
-                    className={`py-1.5 px-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                      paymentMethod === 'c2c'
-                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    C2C (Kartdan karta)
                   </button>
                   <button
                     type="button"

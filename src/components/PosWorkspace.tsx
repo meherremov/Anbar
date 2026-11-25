@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  ArrowLeftRight,
   Banknote,
   Check,
   CheckCircle2,
@@ -719,12 +718,6 @@ export function PosWorkspace({
       } else if (e.key === 'F6') {
         e.preventDefault();
         if (!pickerOpen) onOpenReturnModal();
-      } else if (e.key === 'F7') {
-        e.preventDefault();
-        if (!pickerOpen) {
-          setPaymentMethod('c2c');
-          setCashReceivedInput('');
-        }
       } else if (e.key === 'F8') {
         e.preventDefault();
         if (!pickerOpen) handlePrintAction();
@@ -1487,7 +1480,7 @@ export function PosWorkspace({
             <span>Ödəniş Növü</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => setPaymentMethod('cash')}
@@ -1507,31 +1500,6 @@ export function PosWorkspace({
                 }`}
               >
                 (F9)
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPaymentMethod('c2c');
-                setCashReceivedInput('');
-              }}
-              className={`rounded-xl border py-2.5 px-2.5 flex flex-col items-center justify-center gap-1 text-center transition-colors cursor-pointer ${
-                paymentMethod === 'c2c'
-                  ? 'bg-[#1976F3] text-white border-[#1976F3] shadow-xs'
-                  : 'bg-[#F8FAFC] dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <ArrowLeftRight className="w-5 h-5" />
-              <span className="text-xs font-bold leading-tight">C2C</span>
-              <span
-                className={`text-[11px] font-medium leading-tight ${
-                  paymentMethod === 'c2c'
-                    ? 'text-blue-100'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                Kartdan karta (F7)
               </span>
             </button>
 
