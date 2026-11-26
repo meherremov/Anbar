@@ -23,11 +23,13 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalBarcodeListener } from './components/GlobalBarcodeListener';
 import { InventoryDashboard } from './components/InventoryDashboard';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { PinSetupModal } from './components/PinSetupModal';
 import { ProductDrawer } from './components/ProductDrawer';
 import { ReceiptPreviewModal } from './components/ReceiptPreviewModal';
 import { ReceiptSettingsModal } from './components/ReceiptSettingsModal';
 import { ReturnSaleModal } from './components/ReturnSaleModal';
 import { SaleModal } from './components/SaleModal';
+import { ScreenLockOverlay } from './components/ScreenLockOverlay';
 import {
   auth,
   db,
@@ -38,6 +40,7 @@ import {
 } from './firebase';
 import {
   DEFAULT_RECEIPT_SETTINGS,
+  DEFAULT_SCREEN_LOCK_SETTINGS,
   type ActiveView,
   type AuthorizedUser,
   type BarcodeScanResult,
@@ -49,6 +52,7 @@ import {
   type ReceiptLineItem,
   type ReceiptSettings,
   type SaleRecord,
+  type ScreenLockSettings,
   type StationeryIconId,
 } from './types/inventory';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -57,6 +61,7 @@ import { isValidStationeryIconId } from './utils/stationeryAssets';
 import { useAppTheme } from './utils/theme';
 
 const ALLOWLIST_CACHE_PREFIX = 'ofis_anbari_allowlist_';
+const SCREEN_LOCK_SESSION_PREFIX = 'ofis_anbari_screen_locked_';
 
 function makeSafeDocId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
@@ -149,6 +154,20 @@ function MainApp() {
   const [receiptSettings, setReceiptSettings] = useState<ReceiptSettings>(
     DEFAULT_RECEIPT_SETTINGS
   );
+  const receiptSettingsRef = useRef<ReceiptSettings>(receiptSettings);
+  receiptSettingsRef.current = receiptSettings;
+
+  const [screenLock, setScreenLock] = useState<ScreenLockSettings>(
+    DEFAULT_SCREEN_LOCK_SETTINGS
+  );
+  const screenLockRef = useRef<ScreenLockSettings>(screenLock);
+  screenLockRef.current = screenLock;
+
+  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(false);
+  const [lockReason, setLockReason] = useState<'idle' | 'manual'>('idle');
+  const [pinSetupOpen, setPinSetupOpen] = useState<boolean>(false);
+  const lastActivityRef = useRef<number>(Date.now());
+
   const [dataLoading, setDataLoading] = useState<boolean>(true);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
@@ -310,6 +329,8 @@ function MainApp() {
       setSales([]);
       setAuthorizedUsers([]);
       setReceiptSettings(DEFAULT_RECEIPT_SETTINGS);
+      setScreenLock(DEFAULT_SCREEN_LOCK_SETTINGS);
+      setIsScreenLocked(false);
       setDataLoading(false);
       return;
     }
@@ -437,6 +458,7 @@ function MainApp() {
       (snap) => {
         if (!snap.exists()) {
           setReceiptSettings(DEFAULT_RECEIPT_SETTINGS);
+          setScreenLock(DEFAULT_SCREEN_LOCK_SETTINGS);
           return;
         }
         const data = snap.data();
@@ -455,6 +477,52 @@ function MainApp() {
               : DEFAULT_RECEIPT_SETTINGS.footerNote,
           paperWidth: data.paperWidth === '58mm' ? '58mm' : '80mm',
         });
+
+        const lockPinHash =
+          typeof data.lockPinHash === 'string' && data.lockPinHash
+            ? data.lockPinHash
+            : undefined;
+        const lockPinSalt =
+          typeof data.lockPinSalt === 'string' && data.lockPinSalt
+            ? data.lockPinSalt
+            : undefined;
+        const lockPinLength =
+          typeof data.lockPinLength === 'number' &&
+          data.lockPinLength >= 4 &&
+          data.lockPinLength <= 6
+            ? data.lockPinLength
+            : undefined;
+        const lockTimeoutSeconds =
+          typeof data.lockTimeoutSeconds === 'number' && data.lockTimeoutSeconds >= 0
+            ? data.lockTimeoutSeconds
+            : DEFAULT_SCREEN_LOCK_SETTINGS.lockTimeoutSeconds;
+        const lockEnabled =
+          typeof data.lockEnabled === 'boolean' ? data.lockEnabled : false;
+
+        setScreenLock({
+          lockEnabled,
+          lockTimeoutSeconds,
+          lockPinHash,
+          lockPinSalt,
+          lockPinLength,
+        });
+
+        // Restore session lock state across page refresh if PIN is still configured
+        if (lockPinHash && lockPinSalt) {
+          try {
+            const savedReason = window.sessionStorage.getItem(
+              `${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`
+            );
+            if (savedReason === 'idle' || savedReason === 'manual') {
+              setLockReason(savedReason);
+              setIsScreenLocked(true);
+            }
+          } catch {
+            // Ignore storage errors
+          }
+        } else {
+          setIsScreenLocked(false);
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, receiptSettingsPath);
@@ -515,10 +583,12 @@ function MainApp() {
     if (user) {
       try {
         window.localStorage.removeItem(`${ALLOWLIST_CACHE_PREFIX}${user.uid}`);
+        window.sessionStorage.removeItem(`${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`);
       } catch {
         // Ignore storage errors
       }
     }
+    setIsScreenLocked(false);
     await signOut(auth);
   };
 
@@ -1344,23 +1414,69 @@ function MainApp() {
     [user, showNotice]
   );
 
+  const buildStoreSettingsDoc = useCallback(
+    (receipt: ReceiptSettings, lock: ScreenLockSettings, uid: string) => {
+      const payload: Record<string, unknown> = {
+        storeName: receipt.storeName,
+        subtitle: receipt.subtitle,
+        address: receipt.address,
+        phone: receipt.phone,
+        taxId: receipt.taxId,
+        footerNote: receipt.footerNote,
+        paperWidth: receipt.paperWidth,
+        lockEnabled: lock.lockEnabled,
+        lockTimeoutSeconds: lock.lockTimeoutSeconds,
+        updatedBy: uid,
+        updatedAt: serverTimestamp(),
+      };
+      if (lock.lockPinHash && lock.lockPinSalt) {
+        payload.lockPinHash = lock.lockPinHash;
+        payload.lockPinSalt = lock.lockPinSalt;
+        payload.lockPinLength = lock.lockPinLength ?? 4;
+      }
+      return payload;
+    },
+    []
+  );
+
+  const lockScreen = useCallback(
+    (reason: 'idle' | 'manual') => {
+      if (!user || !screenLockRef.current.lockPinHash || !screenLockRef.current.lockPinSalt) {
+        return;
+      }
+      setLockReason(reason);
+      setIsScreenLocked(true);
+      try {
+        window.sessionStorage.setItem(
+          `${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`,
+          reason
+        );
+      } catch {
+        // Ignore storage errors
+      }
+    },
+    [user]
+  );
+
+  const unlockScreen = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    setIsScreenLocked(false);
+    if (user) {
+      try {
+        window.sessionStorage.removeItem(`${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`);
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }, [user]);
+
   const handleSaveReceiptSettings = useCallback(
     async (next: ReceiptSettings) => {
       if (!user) return;
       const docPath = `store_settings/${user.uid}`;
+      const payload = buildStoreSettingsDoc(next, screenLockRef.current, user.uid);
       const mode = await runOfflineSafeWrite(
-        () =>
-          setDoc(doc(db, 'store_settings', user.uid), {
-            storeName: next.storeName,
-            subtitle: next.subtitle,
-            address: next.address,
-            phone: next.phone,
-            taxId: next.taxId,
-            footerNote: next.footerNote,
-            paperWidth: next.paperWidth,
-            updatedBy: user.uid,
-            updatedAt: serverTimestamp(),
-          }),
+        () => setDoc(doc(db, 'store_settings', user.uid), payload),
         OperationType.WRITE,
         docPath
       );
@@ -1370,8 +1486,119 @@ function MainApp() {
           : 'Çek və printer ayarları yadda saxlanıldı'
       );
     },
-    [user, showNotice]
+    [user, showNotice, buildStoreSettingsDoc]
   );
+
+  const handleSaveScreenLockSettings = useCallback(
+    async (next: ScreenLockSettings, lockImmediately = false) => {
+      if (!user) return;
+      const docPath = `store_settings/${user.uid}`;
+      const payload = buildStoreSettingsDoc(receiptSettingsRef.current, next, user.uid);
+      setScreenLock(next);
+      lastActivityRef.current = Date.now();
+      const mode = await runOfflineSafeWrite(
+        () => setDoc(doc(db, 'store_settings', user.uid), payload),
+        OperationType.WRITE,
+        docPath
+      );
+
+      if (lockImmediately && next.lockPinHash && next.lockPinSalt) {
+        setLockReason('manual');
+        setIsScreenLocked(true);
+        try {
+          window.sessionStorage.setItem(
+            `${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`,
+            'manual'
+          );
+        } catch {
+          // Ignore storage errors
+        }
+        return;
+      }
+
+      if (!next.lockPinHash || !next.lockPinSalt) {
+        setIsScreenLocked(false);
+        try {
+          window.sessionStorage.removeItem(`${SCREEN_LOCK_SESSION_PREFIX}${user.uid}`);
+        } catch {
+          // Ignore storage errors
+        }
+      }
+
+      showNotice(
+        mode === 'offline'
+          ? 'Ekran kilidi ayarları oflayn yadda saxlanıldı'
+          : next.lockPinHash
+          ? 'Ekran kilidi ayarları yadda saxlanıldı'
+          : 'Ekran kilidi ləğv edildi'
+      );
+    },
+    [user, showNotice, buildStoreSettingsDoc]
+  );
+
+  // Automatic idle lock monitor (mousemove/keydown/touch/visibility wake-up)
+  useEffect(() => {
+    if (
+      !isAuthorizedStoreUser ||
+      !screenLock.lockEnabled ||
+      !screenLock.lockPinHash ||
+      !screenLock.lockPinSalt ||
+      screenLock.lockTimeoutSeconds <= 0 ||
+      isScreenLocked
+    ) {
+      return;
+    }
+
+    lastActivityRef.current = Date.now();
+    const timeoutMs = screenLock.lockTimeoutSeconds * 1000;
+
+    const markActive = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    const checkIdle = () => {
+      if (Date.now() - lastActivityRef.current >= timeoutMs) {
+        lockScreen('idle');
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        checkIdle();
+      }
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'touchstart',
+      'pointerdown',
+      'wheel',
+      'scroll',
+    ];
+    for (const evt of activityEvents) {
+      window.addEventListener(evt, markActive, { passive: true });
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const intervalId = window.setInterval(checkIdle, 1000);
+
+    return () => {
+      for (const evt of activityEvents) {
+        window.removeEventListener(evt, markActive);
+      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [
+    isAuthorizedStoreUser,
+    screenLock.lockEnabled,
+    screenLock.lockPinHash,
+    screenLock.lockPinSalt,
+    screenLock.lockTimeoutSeconds,
+    isScreenLocked,
+    lockScreen,
+  ]);
 
   const handleReprintSale = useCallback(
     (targetSale: SaleRecord) => {
@@ -1567,7 +1794,9 @@ function MainApp() {
   }, [products]);
 
   const hasAnyBlockingModal = Boolean(
-    scannerOpen ||
+    isScreenLocked ||
+      pinSetupOpen ||
+      scannerOpen ||
       saleOpen ||
       returnModalOpen ||
       drawerOpen ||
@@ -1677,7 +1906,7 @@ function MainApp() {
   return (
     <>
       <GlobalBarcodeListener
-        enabled={isAuthorizedStoreUser}
+        enabled={isAuthorizedStoreUser && !isScreenLocked}
         onScan={handleGlobalBarcodeScan}
       />
 
@@ -1693,12 +1922,21 @@ function MainApp() {
         sales={sales}
         authorizedUsers={authorizedUsers}
         receiptSettings={receiptSettings}
+        screenLockSettings={screenLock}
         loading={dataLoading}
         syncNotice={syncNotice}
         hasBlockingModal={hasAnyBlockingModal}
         externalSearch={externalDashboardSearch}
         externalPosScan={externalPosScan}
         onSignOut={handleSignOut}
+        onLockNow={() => {
+          if (screenLock.lockPinHash && screenLock.lockPinSalt) {
+            lockScreen('manual');
+          } else {
+            setPinSetupOpen(true);
+          }
+        }}
+        onOpenPinSetup={() => setPinSetupOpen(true)}
         onOpenNewProduct={() => {
           setEditingProduct(null);
           setInitialBarcode(null);
@@ -1735,6 +1973,7 @@ function MainApp() {
         onDeleteCategory={(cat) => setDeleteTargetCategory(cat)}
         onOpenReceiptSettings={() => setReceiptSettingsOpen(true)}
         onSaveReceiptSettings={handleSaveReceiptSettings}
+        onSaveScreenLockSettings={(next) => handleSaveScreenLockSettings(next)}
         onReprintSale={handleReprintSale}
         onRequestDeleteSale={(sale) => setDeleteTargetSale(sale)}
         onAddAuthorizedUser={handleAddAuthorizedUser}
@@ -1831,6 +2070,27 @@ function MainApp() {
         onClose={() => setReceiptSettingsOpen(false)}
         onSave={handleSaveReceiptSettings}
       />
+
+      <PinSetupModal
+        isOpen={pinSetupOpen}
+        currentSettings={screenLock}
+        onClose={() => setPinSetupOpen(false)}
+        onSave={handleSaveScreenLockSettings}
+      />
+
+      {screenLock.lockPinHash && screenLock.lockPinSalt ? (
+        <ScreenLockOverlay
+          isOpen={isScreenLocked}
+          reason={lockReason}
+          storeName={receiptSettings.storeName}
+          userEmail={user.email || OWNER_EMAIL}
+          pinHash={screenLock.lockPinHash}
+          pinSalt={screenLock.lockPinSalt}
+          pinLength={screenLock.lockPinLength ?? 4}
+          onUnlock={unlockScreen}
+          onSignOut={handleSignOut}
+        />
+      ) : null}
 
       <DeleteConfirmModal
         isOpen={Boolean(

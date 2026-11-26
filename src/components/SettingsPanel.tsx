@@ -1,32 +1,44 @@
 import {
   Check,
+  Lock,
   Moon,
   Printer,
   ScanBarcode,
+  Shield,
   Sun,
 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   RECEIPT_LIMITS,
   type ReceiptSettings,
+  type ScreenLockSettings,
   type ThermalPaperWidth,
 } from '../types/inventory';
+import { formatTimeoutLabel, LOCK_TIMEOUT_OPTIONS } from '../utils/pinLock';
 import type { AppTheme } from '../utils/theme';
 
 interface SettingsPanelProps {
   receiptSettings: ReceiptSettings;
+  screenLockSettings: ScreenLockSettings;
   theme: AppTheme;
   onToggleTheme: () => void;
   onSaveReceiptSettings: (next: ReceiptSettings) => Promise<void>;
+  onSaveScreenLockSettings: (next: ScreenLockSettings) => Promise<void>;
+  onOpenPinSetup: () => void;
+  onLockNow: () => void;
 }
 
 const AUTO_PRINT_STORAGE_KEY = 'ofis_anbari_auto_print_receipt';
 
 export function SettingsPanel({
   receiptSettings,
+  screenLockSettings,
   theme,
   onToggleTheme,
   onSaveReceiptSettings,
+  onSaveScreenLockSettings,
+  onOpenPinSetup,
+  onLockNow,
 }: SettingsPanelProps) {
   const [form, setForm] = useState<ReceiptSettings>(receiptSettings);
   const [saving, setSaving] = useState<boolean>(false);
@@ -276,8 +288,114 @@ export function SettingsPanel({
         </form>
       </section>
 
-      {/* Right Column: Appearance & USB Barcode Scanner */}
+      {/* Right Column: Screen Lock, Appearance & USB Barcode Scanner */}
       <div className="space-y-5">
+        <section className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3.5 shadow-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-[#1976F3] dark:text-blue-400 inline-flex items-center justify-center shrink-0">
+                <Shield className="w-4 h-4" />
+              </span>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Avtomatik Ekran Kilidi (PIN)
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {screenLockSettings.lockPinHash && screenLockSettings.lockPinSalt
+                    ? screenLockSettings.lockEnabled &&
+                      screenLockSettings.lockTimeoutSeconds > 0
+                      ? `Aktivdir · ${formatTimeoutLabel(
+                          screenLockSettings.lockTimeoutSeconds
+                        )} istifadəsiz qaldıqda kilidlənir`
+                      : 'PIN kod təyin edilib, avtomatik kilid müvəqqəti söndürülüb'
+                    : 'Sistem istifadəsiz qaldıqda səhifəni PIN koda salın'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {screenLockSettings.lockPinHash && screenLockSettings.lockPinSalt ? (
+            <>
+              <label className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 cursor-pointer select-none">
+                <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                  İstifadəsiz qaldıqda avtomatik kilidlə
+                </span>
+                <input
+                  type="checkbox"
+                  checked={screenLockSettings.lockEnabled}
+                  onChange={(e) =>
+                    void onSaveScreenLockSettings({
+                      ...screenLockSettings,
+                      lockEnabled: e.target.checked,
+                      lockTimeoutSeconds:
+                        e.target.checked && screenLockSettings.lockTimeoutSeconds <= 0
+                          ? 180
+                          : screenLockSettings.lockTimeoutSeconds,
+                    })
+                  }
+                  className="w-4 h-4 rounded border-slate-300 text-[#1976F3] focus:ring-[#1976F3]"
+                />
+              </label>
+
+              <div>
+                <span className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                  Kilidləmə vaxtı
+                </span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {LOCK_TIMEOUT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() =>
+                        void onSaveScreenLockSettings({
+                          ...screenLockSettings,
+                          lockEnabled: true,
+                          lockTimeoutSeconds: opt.value,
+                        })
+                      }
+                      className={`py-1.5 px-2 rounded-lg border text-[11px] font-semibold transition-colors cursor-pointer ${
+                        screenLockSettings.lockEnabled &&
+                        screenLockSettings.lockTimeoutSeconds === opt.value
+                          ? 'border-[#1976F3] bg-blue-50 dark:bg-blue-950/60 text-[#1976F3] dark:text-blue-300'
+                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={onOpenPinSetup}
+                  className="px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg cursor-pointer"
+                >
+                  PIN kodu dəyiş
+                </button>
+                <button
+                  type="button"
+                  onClick={onLockNow}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#1976F3] hover:bg-[#1565D8] rounded-lg cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>İndi kilidlə</span>
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenPinSetup}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1976F3] hover:bg-[#1565D8] rounded-lg transition-colors cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>PIN kod təyin et və aktivləşdir</span>
+            </button>
+          )}
+        </section>
+
         <section className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3 shadow-xs">
           <h3 className="text-sm font-bold text-slate-900 dark:text-white">
             Görünüş Rejimi

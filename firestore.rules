@@ -223,6 +223,11 @@ service cloud.firestore {
           'taxId',
           'footerNote',
           'paperWidth',
+          'lockEnabled',
+          'lockTimeoutSeconds',
+          'lockPinHash',
+          'lockPinSalt',
+          'lockPinLength',
           'updatedBy',
           'updatedAt'
         ])
@@ -233,6 +238,11 @@ service cloud.firestore {
         && isValidOptionalString(data, 'taxId', 40)
         && isValidOptionalString(data, 'footerNote', 160)
         && data.paperWidth in ['80mm', '58mm']
+        && (!('lockEnabled' in data) || data.lockEnabled is bool)
+        && (!('lockTimeoutSeconds' in data) || ((data.lockTimeoutSeconds is int || data.lockTimeoutSeconds is float) && data.lockTimeoutSeconds >= 0 && data.lockTimeoutSeconds <= 86400))
+        && isValidOptionalString(data, 'lockPinHash', 128)
+        && isValidOptionalString(data, 'lockPinSalt', 64)
+        && (!('lockPinLength' in data) || (data.lockPinLength is int && data.lockPinLength >= 4 && data.lockPinLength <= 6))
         && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
         && data.updatedBy == request.auth.uid
         && data.updatedAt is timestamp;
@@ -433,6 +443,11 @@ service cloud.firestore {
           'taxId',
           'footerNote',
           'paperWidth',
+          'lockEnabled',
+          'lockTimeoutSeconds',
+          'lockPinHash',
+          'lockPinSalt',
+          'lockPinLength',
           'updatedBy',
           'updatedAt'
         ]);

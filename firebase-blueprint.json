@@ -333,6 +333,28 @@
           "enum": ["80mm", "58mm"],
           "description": "Thermal printer paper width."
         },
+        "lockEnabled": {
+          "type": "boolean",
+          "description": "Whether automatic idle screen lock is enabled."
+        },
+        "lockTimeoutSeconds": {
+          "type": "number",
+          "description": "Idle duration in seconds before locking the screen (0 to 86400)."
+        },
+        "lockPinHash": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "PBKDF2-SHA256 hex hash of the screen-lock PIN."
+        },
+        "lockPinSalt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Random hex salt used for the screen-lock PIN hash."
+        },
+        "lockPinLength": {
+          "type": "number",
+          "description": "Digit count of the configured PIN (4 to 6)."
+        },
         "updatedBy": {
           "type": "string",
           "minLength": 1,

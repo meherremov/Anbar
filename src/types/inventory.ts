@@ -178,6 +178,19 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   paperWidth: '80mm',
 };
 
+export interface ScreenLockSettings {
+  lockEnabled: boolean;
+  lockTimeoutSeconds: number;
+  lockPinHash?: string;
+  lockPinSalt?: string;
+  lockPinLength?: number;
+}
+
+export const DEFAULT_SCREEN_LOCK_SETTINGS: ScreenLockSettings = {
+  lockEnabled: false,
+  lockTimeoutSeconds: 180,
+};
+
 export interface CheckoutCartItem {
   product: Product;
   quantity: number;
