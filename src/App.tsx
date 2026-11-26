@@ -41,6 +41,7 @@ import {
 import {
   DEFAULT_RECEIPT_SETTINGS,
   DEFAULT_SCREEN_LOCK_SETTINGS,
+  sanitizeReceiptSettings,
   type ActiveView,
   type AuthorizedUser,
   type BarcodeScanResult,
@@ -420,6 +421,8 @@ function MainApp() {
             quantity: typeof data.quantity === 'number' ? data.quantity : 0,
             unit: String(data.unit || 'ədəd'),
             unitPrice: typeof data.unitPrice === 'number' ? data.unitPrice : 0,
+            purchasePrice:
+              typeof data.purchasePrice === 'number' ? data.purchasePrice : undefined,
             totalAmount: typeof data.totalAmount === 'number' ? data.totalAmount : 0,
             discountAmount:
               typeof data.discountAmount === 'number' ? data.discountAmount : undefined,
@@ -462,21 +465,7 @@ function MainApp() {
           return;
         }
         const data = snap.data();
-        setReceiptSettings({
-          storeName:
-            typeof data.storeName === 'string' && data.storeName.trim()
-              ? data.storeName
-              : DEFAULT_RECEIPT_SETTINGS.storeName,
-          subtitle: typeof data.subtitle === 'string' ? data.subtitle : '',
-          address: typeof data.address === 'string' ? data.address : '',
-          phone: typeof data.phone === 'string' ? data.phone : '',
-          taxId: typeof data.taxId === 'string' ? data.taxId : '',
-          footerNote:
-            typeof data.footerNote === 'string'
-              ? data.footerNote
-              : DEFAULT_RECEIPT_SETTINGS.footerNote,
-          paperWidth: data.paperWidth === '58mm' ? '58mm' : '80mm',
-        });
+        setReceiptSettings(sanitizeReceiptSettings(data));
 
         const lockPinHash =
           typeof data.lockPinHash === 'string' && data.lockPinHash
@@ -722,6 +711,7 @@ function MainApp() {
           category: string;
           unit: string;
           unitPrice: number;
+          unitCost?: number;
           sellQty: number;
           nextQty: number;
           grossLineTotal: number;
@@ -754,6 +744,7 @@ function MainApp() {
                 category: localMatch.category,
                 unit: localMatch.unit,
                 salePrice: localMatch.salePrice,
+                purchasePrice: localMatch.purchasePrice,
                 quantity: localMatch.quantity,
                 ownerId: localMatch.ownerId,
               };
@@ -776,6 +767,12 @@ function MainApp() {
             cartItem.unitPriceOverride >= 0
               ? Math.round(cartItem.unitPriceOverride * 100) / 100
               : catalogPrice;
+          const unitCost =
+            typeof sourceData.purchasePrice === 'number' &&
+            !Number.isNaN(sourceData.purchasePrice) &&
+            sourceData.purchasePrice >= 0
+              ? Math.round(sourceData.purchasePrice * 100) / 100
+              : undefined;
           const currentQty = Number(sourceData.quantity ?? 0);
           const sellQty = Math.round(cartItem.quantity * 100) / 100;
 
@@ -808,6 +805,7 @@ function MainApp() {
             category: String(sourceData.category || 'Digər'),
             unit,
             unitPrice,
+            unitCost,
             sellQty,
             nextQty,
             grossLineTotal,
@@ -884,6 +882,9 @@ function MainApp() {
             paymentMethod: options.paymentMethod,
             soldAt: serverTimestamp(),
           };
+          if (typeof entry.unitCost === 'number') {
+            salePayload.purchasePrice = entry.unitCost;
+          }
           if (lineDiscount > 0) {
             salePayload.discountAmount = lineDiscount;
           }
@@ -969,6 +970,7 @@ function MainApp() {
             category: string;
             unit: string;
             unitPrice: number;
+            unitCost?: number;
             sellQty: number;
             nextQty: number;
             grossLineTotal: number;
@@ -996,6 +998,12 @@ function MainApp() {
               cartItem.unitPriceOverride >= 0
                 ? Math.round(cartItem.unitPriceOverride * 100) / 100
                 : catalogPrice;
+            const unitCost =
+              typeof data.purchasePrice === 'number' &&
+              !Number.isNaN(data.purchasePrice) &&
+              data.purchasePrice >= 0
+                ? Math.round(data.purchasePrice * 100) / 100
+                : undefined;
             const currentQty = Number(data.quantity ?? 0);
             const sellQty = Math.round(cartItem.quantity * 100) / 100;
 
@@ -1028,6 +1036,7 @@ function MainApp() {
               category: String(data.category || 'Digər'),
               unit,
               unitPrice,
+              unitCost,
               sellQty,
               nextQty,
               grossLineTotal,
@@ -1104,6 +1113,9 @@ function MainApp() {
               paymentMethod: options.paymentMethod,
               soldAt: serverTimestamp(),
             };
+            if (typeof entry.unitCost === 'number') {
+              salePayload.purchasePrice = entry.unitCost;
+            }
             if (lineDiscount > 0) {
               salePayload.discountAmount = lineDiscount;
             }
@@ -1428,14 +1440,30 @@ function MainApp() {
 
   const buildStoreSettingsDoc = useCallback(
     (receipt: ReceiptSettings, lock: ScreenLockSettings, uid: string) => {
+      const cleanReceipt = sanitizeReceiptSettings(receipt);
       const payload: Record<string, unknown> = {
-        storeName: receipt.storeName,
-        subtitle: receipt.subtitle,
-        address: receipt.address,
-        phone: receipt.phone,
-        taxId: receipt.taxId,
-        footerNote: receipt.footerNote,
-        paperWidth: receipt.paperWidth,
+        storeName: cleanReceipt.storeName,
+        subtitle: cleanReceipt.subtitle,
+        address: cleanReceipt.address,
+        phone: cleanReceipt.phone,
+        taxId: cleanReceipt.taxId,
+        footerNote: cleanReceipt.footerNote,
+        paperWidth: cleanReceipt.paperWidth,
+        templateId: cleanReceipt.templateId,
+        headerBadge: cleanReceipt.headerBadge,
+        showBarcode: cleanReceipt.showBarcode,
+        showItemBarcodes: cleanReceipt.showItemBarcodes,
+        showCashier: cleanReceipt.showCashier,
+        showPaymentMethod: cleanReceipt.showPaymentMethod,
+        showTaxId: cleanReceipt.showTaxId,
+        fontScale: cleanReceipt.fontScale,
+        dividerStyle: cleanReceipt.dividerStyle,
+        showLogo: cleanReceipt.showLogo,
+        logoPreset: cleanReceipt.logoPreset,
+        logoDataUrl: cleanReceipt.logoDataUrl,
+        promoBanner: cleanReceipt.promoBanner,
+        promoBannerUppercase: cleanReceipt.promoBannerUppercase,
+        promoBannerStyle: cleanReceipt.promoBannerStyle,
         lockEnabled: lock.lockEnabled,
         lockTimeoutSeconds: lock.lockTimeoutSeconds,
         updatedBy: uid,

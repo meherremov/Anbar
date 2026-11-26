@@ -167,6 +167,7 @@ service cloud.firestore {
           'quantity',
           'unit',
           'unitPrice',
+          'purchasePrice',
           'totalAmount',
           'discountAmount',
           'ownerId',
@@ -187,6 +188,7 @@ service cloud.firestore {
         && isValidPositiveNumber(data.quantity)
         && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 24
         && isValidNonNegativeNumber(data.unitPrice)
+        && isValidOptionalNonNegativeNumber(data, 'purchasePrice')
         && isValidNonNegativeNumber(data.totalAmount)
         && isValidOptionalNonNegativeNumber(data, 'discountAmount')
         && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
@@ -223,6 +225,21 @@ service cloud.firestore {
           'taxId',
           'footerNote',
           'paperWidth',
+          'templateId',
+          'headerBadge',
+          'showBarcode',
+          'showItemBarcodes',
+          'showCashier',
+          'showPaymentMethod',
+          'showTaxId',
+          'fontScale',
+          'dividerStyle',
+          'showLogo',
+          'logoPreset',
+          'logoDataUrl',
+          'promoBanner',
+          'promoBannerUppercase',
+          'promoBannerStyle',
           'lockEnabled',
           'lockTimeoutSeconds',
           'lockPinHash',
@@ -238,6 +255,21 @@ service cloud.firestore {
         && isValidOptionalString(data, 'taxId', 40)
         && isValidOptionalString(data, 'footerNote', 160)
         && data.paperWidth in ['80mm', '58mm']
+        && (!('templateId' in data) || (data.templateId is string && data.templateId.size() <= 24 && data.templateId in ['classic', 'modern', 'compact', 'detailed']))
+        && isValidOptionalString(data, 'headerBadge', 40)
+        && (!('showBarcode' in data) || data.showBarcode is bool)
+        && (!('showItemBarcodes' in data) || data.showItemBarcodes is bool)
+        && (!('showCashier' in data) || data.showCashier is bool)
+        && (!('showPaymentMethod' in data) || data.showPaymentMethod is bool)
+        && (!('showTaxId' in data) || data.showTaxId is bool)
+        && (!('fontScale' in data) || (data.fontScale is string && data.fontScale.size() <= 16 && data.fontScale in ['compact', 'normal', 'large']))
+        && (!('dividerStyle' in data) || (data.dividerStyle is string && data.dividerStyle.size() <= 16 && data.dividerStyle in ['dashed', 'solid', 'double']))
+        && (!('showLogo' in data) || data.showLogo is bool)
+        && (!('logoPreset' in data) || (data.logoPreset is string && data.logoPreset.size() <= 24 && data.logoPreset in ['none', 'stationery', 'bag', 'book', 'star', 'crown']))
+        && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 45000 && (data.logoDataUrl == '' || data.logoDataUrl.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'))))
+        && isValidOptionalString(data, 'promoBanner', 160)
+        && (!('promoBannerUppercase' in data) || data.promoBannerUppercase is bool)
+        && (!('promoBannerStyle' in data) || (data.promoBannerStyle is string && data.promoBannerStyle.size() <= 16 && data.promoBannerStyle in ['boxed', 'inverted', 'plain']))
         && (!('lockEnabled' in data) || data.lockEnabled is bool)
         && (!('lockTimeoutSeconds' in data) || ((data.lockTimeoutSeconds is int || data.lockTimeoutSeconds is float) && data.lockTimeoutSeconds >= 0 && data.lockTimeoutSeconds <= 86400))
         && isValidOptionalString(data, 'lockPinHash', 128)
@@ -443,6 +475,21 @@ service cloud.firestore {
           'taxId',
           'footerNote',
           'paperWidth',
+          'templateId',
+          'headerBadge',
+          'showBarcode',
+          'showItemBarcodes',
+          'showCashier',
+          'showPaymentMethod',
+          'showTaxId',
+          'fontScale',
+          'dividerStyle',
+          'showLogo',
+          'logoPreset',
+          'logoDataUrl',
+          'promoBanner',
+          'promoBannerUppercase',
+          'promoBannerStyle',
           'lockEnabled',
           'lockTimeoutSeconds',
           'lockPinHash',

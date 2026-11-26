@@ -190,6 +190,10 @@
           "type": "number",
           "description": "Sale unit price in AZN."
         },
+        "purchasePrice": {
+          "type": "number",
+          "description": "Optional snapshot of unit purchase cost in AZN at sale time (non-negative)."
+        },
         "totalAmount": {
           "type": "number",
           "description": "Total transaction amount in AZN."
@@ -332,6 +336,80 @@
           "type": "string",
           "enum": ["80mm", "58mm"],
           "description": "Thermal printer paper width."
+        },
+        "templateId": {
+          "type": "string",
+          "enum": ["classic", "modern", "compact", "detailed"],
+          "maxLength": 24,
+          "description": "Selected receipt template layout."
+        },
+        "headerBadge": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional receipt header/footer document title badge."
+        },
+        "showBarcode": {
+          "type": "boolean",
+          "description": "Whether to render the verification barcode at the bottom of the receipt."
+        },
+        "showItemBarcodes": {
+          "type": "boolean",
+          "description": "Whether to show product barcodes under line items."
+        },
+        "showCashier": {
+          "type": "boolean",
+          "description": "Whether to display the cashier label on the receipt."
+        },
+        "showPaymentMethod": {
+          "type": "boolean",
+          "description": "Whether to display the payment method on the receipt."
+        },
+        "showTaxId": {
+          "type": "boolean",
+          "description": "Whether to display the store VÖEN when entered."
+        },
+        "fontScale": {
+          "type": "string",
+          "enum": ["compact", "normal", "large"],
+          "maxLength": 16,
+          "description": "Receipt font size scale."
+        },
+        "dividerStyle": {
+          "type": "string",
+          "enum": ["dashed", "solid", "double"],
+          "maxLength": 16,
+          "description": "Receipt section divider line style."
+        },
+        "showLogo": {
+          "type": "boolean",
+          "description": "Whether to display the selected store logo or uploaded image at the top of the receipt."
+        },
+        "logoPreset": {
+          "type": "string",
+          "enum": ["none", "stationery", "bag", "book", "star", "crown"],
+          "maxLength": 24,
+          "description": "Built-in geometric logo preset identifier."
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 45000,
+          "pattern": "^(|data:image\\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+)$",
+          "description": "Compressed custom store logo image data URL (PNG, JPEG, or WebP)."
+        },
+        "promoBanner": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional custom greeting or promotional message rendered at the bottom of the receipt."
+        },
+        "promoBannerUppercase": {
+          "type": "boolean",
+          "description": "Whether to transform promoBanner into uppercase letters using Azerbaijani locale."
+        },
+        "promoBannerStyle": {
+          "type": "string",
+          "enum": ["boxed", "inverted", "plain"],
+          "maxLength": 16,
+          "description": "Visual presentation style for the bottom greeting banner."
         },
         "lockEnabled": {
           "type": "boolean",

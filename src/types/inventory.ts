@@ -125,6 +125,7 @@ export interface SaleRecord {
   quantity: number;
   unit: string;
   unitPrice: number;
+  purchasePrice?: number;
   totalAmount: number;
   discountAmount?: number;
   ownerId: string;
@@ -148,6 +149,119 @@ export function getNetSaleAmount(sale: SaleRecord): number {
   return Math.max(0, Math.round((sale.totalAmount - returned) * 100) / 100);
 }
 
+export function getSaleUnitCost(
+  sale: SaleRecord,
+  productCostMap?: Map<string, number>
+): number | undefined {
+  if (
+    typeof sale.purchasePrice === 'number' &&
+    !Number.isNaN(sale.purchasePrice) &&
+    sale.purchasePrice >= 0
+  ) {
+    return sale.purchasePrice;
+  }
+  const fallback = productCostMap?.get(sale.productId);
+  if (typeof fallback === 'number' && !Number.isNaN(fallback) && fallback >= 0) {
+    return fallback;
+  }
+  return undefined;
+}
+
+export function getSaleCostAmount(
+  sale: SaleRecord,
+  productCostMap?: Map<string, number>
+): number | null {
+  const netQty = getNetSaleQuantity(sale);
+  if (netQty <= 0) {
+    return 0;
+  }
+  const unitCost = getSaleUnitCost(sale, productCostMap);
+  if (unitCost === undefined) {
+    return null;
+  }
+  return Math.round(unitCost * netQty * 100) / 100;
+}
+
+export function getSaleNetProfit(
+  sale: SaleRecord,
+  productCostMap?: Map<string, number>
+): number | null {
+  const cost = getSaleCostAmount(sale, productCostMap);
+  if (cost === null) {
+    return null;
+  }
+  return Math.round((getNetSaleAmount(sale) - cost) * 100) / 100;
+}
+
+export type ReceiptTemplateId = 'classic' | 'modern' | 'compact' | 'detailed';
+export type ReceiptFontScale = 'compact' | 'normal' | 'large';
+export type ReceiptDividerStyle = 'dashed' | 'solid' | 'double';
+export type ReceiptLogoPreset =
+  | 'none'
+  | 'stationery'
+  | 'bag'
+  | 'book'
+  | 'star'
+  | 'crown';
+export type ReceiptPromoStyle = 'boxed' | 'inverted' | 'plain';
+
+export interface ReceiptTemplateMeta {
+  id: ReceiptTemplateId;
+  name: string;
+  description: string;
+  badge: string;
+}
+
+export const RECEIPT_TEMPLATES: ReceiptTemplateMeta[] = [
+  {
+    id: 'modern',
+    name: 'Müasir Kassa',
+    description: 'Qara başlıq zolağı, təmiz sətirlər və kontrastlı yekun bloku',
+    badge: 'Tövsiyə',
+  },
+  {
+    id: 'classic',
+    name: 'Klassik Termal',
+    description: 'Müasirləşdirilmiş standart kassa çeki, barkod və aydın cədvəl',
+    badge: 'Standart',
+  },
+  {
+    id: 'compact',
+    name: 'Kompakt Ekonom',
+    description: 'Kağıza qənaət edən sıx düzülüş və sürətli oxunuş',
+    badge: 'Qənaətcil',
+  },
+  {
+    id: 'detailed',
+    name: 'Rəsmi / Detallı',
+    description: 'Çərçivəli başlıq, VÖEN bloku, sıra cədvəli və imza xətti',
+    badge: 'Rəsmi',
+  },
+];
+
+export const RECEIPT_LOGO_PRESETS: Array<{
+  id: ReceiptLogoPreset;
+  label: string;
+}> = [
+  { id: 'none', label: 'Logosuz' },
+  { id: 'stationery', label: 'Dəftərxana' },
+  { id: 'bag', label: 'Mağaza' },
+  { id: 'book', label: 'Kitab' },
+  { id: 'star', label: 'Ulduz' },
+  { id: 'crown', label: 'Premium' },
+];
+
+export const RECEIPT_PROMO_SUGGESTIONS: string[] = [
+  'Yeni iliniz mübarək!',
+  'Bayramınız mübarək!',
+  'Novruz bayramınız mübarək!',
+  'Yeni tədris iliniz uğurlu olsun!',
+  'Bizi seçdiyiniz üçün təşəkkürlər!',
+];
+
+export const LOGO_DATA_URL_PATTERN =
+  /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
 export const RECEIPT_LIMITS = {
   STORE_NAME_MAX: 80,
   SUBTITLE_MAX: 100,
@@ -156,6 +270,9 @@ export const RECEIPT_LIMITS = {
   TAX_ID_MAX: 40,
   FOOTER_NOTE_MAX: 160,
   RECEIPT_NUMBER_MAX: 40,
+  HEADER_BADGE_MAX: 40,
+  LOGO_DATA_URL_MAX: 45000,
+  PROMO_BANNER_MAX: 160,
 } as const;
 
 export interface ReceiptSettings {
@@ -166,6 +283,21 @@ export interface ReceiptSettings {
   taxId: string;
   footerNote: string;
   paperWidth: ThermalPaperWidth;
+  templateId: ReceiptTemplateId;
+  headerBadge: string;
+  showBarcode: boolean;
+  showItemBarcodes: boolean;
+  showCashier: boolean;
+  showPaymentMethod: boolean;
+  showTaxId: boolean;
+  fontScale: ReceiptFontScale;
+  dividerStyle: ReceiptDividerStyle;
+  showLogo: boolean;
+  logoPreset: ReceiptLogoPreset;
+  logoDataUrl: string;
+  promoBanner: string;
+  promoBannerUppercase: boolean;
+  promoBannerStyle: ReceiptPromoStyle;
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
@@ -176,7 +308,153 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   taxId: '',
   footerNote: 'Alış-verişiniz üçün təşəkkür edirik!',
   paperWidth: '80mm',
+  templateId: 'modern',
+  headerBadge: 'SATIŞ ÇEKİ',
+  showBarcode: true,
+  showItemBarcodes: false,
+  showCashier: true,
+  showPaymentMethod: true,
+  showTaxId: true,
+  fontScale: 'normal',
+  dividerStyle: 'dashed',
+  showLogo: true,
+  logoPreset: 'stationery',
+  logoDataUrl: '',
+  promoBanner: '',
+  promoBannerUppercase: false,
+  promoBannerStyle: 'boxed',
 };
+
+export function isValidReceiptTemplateId(val: unknown): val is ReceiptTemplateId {
+  return val === 'classic' || val === 'modern' || val === 'compact' || val === 'detailed';
+}
+
+export function isValidReceiptFontScale(val: unknown): val is ReceiptFontScale {
+  return val === 'compact' || val === 'normal' || val === 'large';
+}
+
+export function isValidReceiptDividerStyle(val: unknown): val is ReceiptDividerStyle {
+  return val === 'dashed' || val === 'solid' || val === 'double';
+}
+
+export function isValidReceiptLogoPreset(val: unknown): val is ReceiptLogoPreset {
+  return (
+    val === 'none' ||
+    val === 'stationery' ||
+    val === 'bag' ||
+    val === 'book' ||
+    val === 'star' ||
+    val === 'crown'
+  );
+}
+
+export function isValidReceiptPromoStyle(val: unknown): val is ReceiptPromoStyle {
+  return val === 'boxed' || val === 'inverted' || val === 'plain';
+}
+
+export function formatPromoBannerText(
+  text: string,
+  uppercase: boolean
+): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return uppercase ? trimmed.toLocaleUpperCase('az-AZ') : trimmed;
+}
+
+export function sanitizeReceiptSettings(
+  input: Partial<ReceiptSettings> | Record<string, unknown>
+): ReceiptSettings {
+  const raw = input as Record<string, unknown>;
+  const storeName =
+    typeof raw.storeName === 'string' && raw.storeName.trim()
+      ? raw.storeName.trim().slice(0, RECEIPT_LIMITS.STORE_NAME_MAX)
+      : DEFAULT_RECEIPT_SETTINGS.storeName;
+
+  const rawLogoDataUrl =
+    typeof raw.logoDataUrl === 'string' ? raw.logoDataUrl.trim() : '';
+  const safeLogoDataUrl =
+    rawLogoDataUrl.length <= RECEIPT_LIMITS.LOGO_DATA_URL_MAX &&
+    LOGO_DATA_URL_PATTERN.test(rawLogoDataUrl)
+      ? rawLogoDataUrl
+      : '';
+
+  return {
+    storeName,
+    subtitle:
+      typeof raw.subtitle === 'string'
+        ? raw.subtitle.trim().slice(0, RECEIPT_LIMITS.SUBTITLE_MAX)
+        : '',
+    address:
+      typeof raw.address === 'string'
+        ? raw.address.trim().slice(0, RECEIPT_LIMITS.ADDRESS_MAX)
+        : '',
+    phone:
+      typeof raw.phone === 'string'
+        ? raw.phone.trim().slice(0, RECEIPT_LIMITS.PHONE_MAX)
+        : '',
+    taxId:
+      typeof raw.taxId === 'string'
+        ? raw.taxId.trim().slice(0, RECEIPT_LIMITS.TAX_ID_MAX)
+        : '',
+    footerNote:
+      typeof raw.footerNote === 'string'
+        ? raw.footerNote.trim().slice(0, RECEIPT_LIMITS.FOOTER_NOTE_MAX)
+        : DEFAULT_RECEIPT_SETTINGS.footerNote,
+    paperWidth: raw.paperWidth === '58mm' ? '58mm' : '80mm',
+    templateId: isValidReceiptTemplateId(raw.templateId)
+      ? raw.templateId
+      : DEFAULT_RECEIPT_SETTINGS.templateId,
+    headerBadge:
+      typeof raw.headerBadge === 'string'
+        ? raw.headerBadge.trim().slice(0, RECEIPT_LIMITS.HEADER_BADGE_MAX)
+        : DEFAULT_RECEIPT_SETTINGS.headerBadge,
+    showBarcode:
+      typeof raw.showBarcode === 'boolean'
+        ? raw.showBarcode
+        : DEFAULT_RECEIPT_SETTINGS.showBarcode,
+    showItemBarcodes:
+      typeof raw.showItemBarcodes === 'boolean'
+        ? raw.showItemBarcodes
+        : DEFAULT_RECEIPT_SETTINGS.showItemBarcodes,
+    showCashier:
+      typeof raw.showCashier === 'boolean'
+        ? raw.showCashier
+        : DEFAULT_RECEIPT_SETTINGS.showCashier,
+    showPaymentMethod:
+      typeof raw.showPaymentMethod === 'boolean'
+        ? raw.showPaymentMethod
+        : DEFAULT_RECEIPT_SETTINGS.showPaymentMethod,
+    showTaxId:
+      typeof raw.showTaxId === 'boolean'
+        ? raw.showTaxId
+        : DEFAULT_RECEIPT_SETTINGS.showTaxId,
+    fontScale: isValidReceiptFontScale(raw.fontScale)
+      ? raw.fontScale
+      : DEFAULT_RECEIPT_SETTINGS.fontScale,
+    dividerStyle: isValidReceiptDividerStyle(raw.dividerStyle)
+      ? raw.dividerStyle
+      : DEFAULT_RECEIPT_SETTINGS.dividerStyle,
+    showLogo:
+      typeof raw.showLogo === 'boolean'
+        ? raw.showLogo
+        : DEFAULT_RECEIPT_SETTINGS.showLogo,
+    logoPreset: isValidReceiptLogoPreset(raw.logoPreset)
+      ? raw.logoPreset
+      : DEFAULT_RECEIPT_SETTINGS.logoPreset,
+    logoDataUrl: safeLogoDataUrl,
+    promoBanner:
+      typeof raw.promoBanner === 'string'
+        ? raw.promoBanner.trim().slice(0, RECEIPT_LIMITS.PROMO_BANNER_MAX)
+        : DEFAULT_RECEIPT_SETTINGS.promoBanner,
+    promoBannerUppercase:
+      typeof raw.promoBannerUppercase === 'boolean'
+        ? raw.promoBannerUppercase
+        : DEFAULT_RECEIPT_SETTINGS.promoBannerUppercase,
+    promoBannerStyle: isValidReceiptPromoStyle(raw.promoBannerStyle)
+      ? raw.promoBannerStyle
+      : DEFAULT_RECEIPT_SETTINGS.promoBannerStyle,
+  };
+}
 
 export interface ScreenLockSettings {
   lockEnabled: boolean;

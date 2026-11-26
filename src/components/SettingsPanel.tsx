@@ -1,5 +1,6 @@
 import {
   Check,
+  Eye,
   Lock,
   Moon,
   Printer,
@@ -7,15 +8,20 @@ import {
   Shield,
   Sun,
 } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   RECEIPT_LIMITS,
+  RECEIPT_TEMPLATES,
+  sanitizeReceiptSettings,
+  type ReceiptData,
   type ReceiptSettings,
   type ScreenLockSettings,
-  type ThermalPaperWidth,
 } from '../types/inventory';
 import { formatTimeoutLabel, LOCK_TIMEOUT_OPTIONS } from '../utils/pinLock';
 import type { AppTheme } from '../utils/theme';
+import { ReceiptActionControls } from './ReceiptActionControls';
+import { ReceiptCustomizerControls } from './ReceiptCustomizerControls';
+import { ThermalReceipt } from './ThermalReceipt';
 
 interface SettingsPanelProps {
   receiptSettings: ReceiptSettings;
@@ -52,6 +58,43 @@ export function SettingsPanel({
     }
   });
   const [scannerTestValue, setScannerTestValue] = useState<string>('');
+  const [previewTimestamp] = useState<Date>(() => new Date());
+
+  const samplePreviewReceipt = useMemo<ReceiptData>(
+    () => ({
+      receiptNumber: 'MK-2026-0148',
+      issuedAt: previewTimestamp,
+      cashierLabel: 'Kassa №1 · Sabir',
+      paymentMethod: 'cash',
+      items: [
+        {
+          productId: 'sample-1',
+          productName: 'Qələm gel mavi 0.5mm',
+          barcode: '4760012345012',
+          quantity: 3,
+          unit: 'ədəd',
+          unitPrice: 1.2,
+          lineTotal: 3.6,
+        },
+        {
+          productId: 'sample-2',
+          productName: 'A4 kağız paketi 500 vərəq',
+          barcode: '4760012345098',
+          quantity: 1,
+          unit: 'paket',
+          unitPrice: 9.5,
+          discountAmount: 0.5,
+          lineTotal: 9.0,
+        },
+      ],
+      subtotalAmount: 13.1,
+      discountAmount: 0.5,
+      totalAmount: 12.6,
+      cashReceived: 20.0,
+      changeAmount: 7.4,
+    }),
+    [previewTimestamp]
+  );
 
   useEffect(() => {
     setForm(receiptSettings);
@@ -77,15 +120,10 @@ export function SettingsPanel({
       return;
     }
 
-    const sanitized: ReceiptSettings = {
+    const sanitized = sanitizeReceiptSettings({
+      ...form,
       storeName,
-      subtitle: form.subtitle.trim().slice(0, RECEIPT_LIMITS.SUBTITLE_MAX),
-      address: form.address.trim().slice(0, RECEIPT_LIMITS.ADDRESS_MAX),
-      phone: form.phone.trim().slice(0, RECEIPT_LIMITS.PHONE_MAX),
-      taxId: form.taxId.trim().slice(0, RECEIPT_LIMITS.TAX_ID_MAX),
-      footerNote: form.footerNote.trim().slice(0, RECEIPT_LIMITS.FOOTER_NOTE_MAX),
-      paperWidth: form.paperWidth === '58mm' ? '58mm' : '80mm',
-    };
+    });
 
     setSaving(true);
     try {
@@ -103,9 +141,12 @@ export function SettingsPanel({
     }
   };
 
+  const activeTemplateMeta =
+    RECEIPT_TEMPLATES.find((t) => t.id === form.templateId) ?? RECEIPT_TEMPLATES[0];
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-5 items-start">
-      {/* Receipt & Zyklen Z-604 Settings */}
+    <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-5 items-start">
+      {/* Receipt Templates, Customization & Zyklen Z-604 Settings */}
       <section className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
         <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
           <span className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-[#1976F3] dark:text-blue-400 inline-flex items-center justify-center shrink-0">
@@ -113,15 +154,15 @@ export function SettingsPanel({
           </span>
           <div>
             <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-              Çek və Zyklen Z-604 Termal Printer Ayarları
+              Çek Formaları və Zyklen Z-604 Printer Ayarları
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Çek başlığı, əlaqə məlumatları və kağız eni buludda yadda saxlanılır
+              Çek nümunəsini seçin, elementləri fərdiləşdirin və çap üçün yadda saxlayın
             </p>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-5">
           {error ? (
             <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-lg text-xs text-red-700 dark:text-red-300">
               {error}
@@ -131,165 +172,72 @@ export function SettingsPanel({
           {savedOk ? (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 rounded-lg text-xs font-medium text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
               <Check className="w-4 h-4 shrink-0" />
-              <span>Ayarlar uğurla yadda saxlanıldı!</span>
+              <span>Seçilmiş çek forması və ayarlar yadda saxlanıldı!</span>
             </div>
           ) : null}
 
-          <div>
-            <label
-              htmlFor="settings-store-name"
-              className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-            >
-              Mağaza adı (çek başlığı) *
+          <ReceiptCustomizerControls
+            value={form}
+            onChange={setForm}
+            idPrefix="settings"
+          />
+
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <label className="flex items-center gap-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoPrint}
+                onChange={(e) => handleToggleAutoPrint(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-[#1976F3] focus:ring-[#1976F3]"
+              />
+              <span>Ödəniş təsdiqləndikdə (F12) avtomatik çap pəncərəsini aç</span>
             </label>
-            <input
-              id="settings-store-name"
-              type="text"
-              required
-              maxLength={RECEIPT_LIMITS.STORE_NAME_MAX}
-              value={form.storeName}
-              onChange={(e) => setForm((p) => ({ ...p, storeName: e.target.value }))}
-              className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-            />
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="settings-subtitle"
-                className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-              >
-                Alt başlıq
-              </label>
-              <input
-                id="settings-subtitle"
-                type="text"
-                maxLength={RECEIPT_LIMITS.SUBTITLE_MAX}
-                value={form.subtitle}
-                onChange={(e) => setForm((p) => ({ ...p, subtitle: e.target.value }))}
-                className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="settings-phone"
-                className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-              >
-                Əlaqə telefonu
-              </label>
-              <input
-                id="settings-phone"
-                type="text"
-                maxLength={RECEIPT_LIMITS.PHONE_MAX}
-                value={form.phone}
-                onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-                placeholder="+994 50 000 00 00"
-                className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="settings-address"
-                className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-              >
-                Mağaza ünvanı
-              </label>
-              <input
-                id="settings-address"
-                type="text"
-                maxLength={RECEIPT_LIMITS.ADDRESS_MAX}
-                value={form.address}
-                onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
-                placeholder="Bakı ş."
-                className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="settings-tax-id"
-                className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-              >
-                VÖEN
-              </label>
-              <input
-                id="settings-tax-id"
-                type="text"
-                maxLength={RECEIPT_LIMITS.TAX_ID_MAX}
-                value={form.taxId}
-                onChange={(e) => setForm((p) => ({ ...p, taxId: e.target.value }))}
-                placeholder="1234567891"
-                className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label
-              htmlFor="settings-footer"
-              className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5"
-            >
-              Çek altı təşəkkür qeydi
-            </label>
-            <input
-              id="settings-footer"
-              type="text"
-              maxLength={RECEIPT_LIMITS.FOOTER_NOTE_MAX}
-              value={form.footerNote}
-              onChange={(e) => setForm((p) => ({ ...p, footerNote: e.target.value }))}
-              className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
-            />
-          </div>
-
-          <div>
-            <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
-              Termal printer kağız eni
-            </span>
-            <div className="grid grid-cols-2 gap-2.5">
-              {(['80mm', '58mm'] as ThermalPaperWidth[]).map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => setForm((p) => ({ ...p, paperWidth: w }))}
-                  className={`py-2.5 px-3 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
-                    form.paperWidth === w
-                      ? 'border-[#1976F3] bg-blue-50 dark:bg-blue-950/60 text-[#1976F3] dark:text-blue-300'
-                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  {w === '80mm' ? '80 mm (Zyklen Z-604)' : '58 mm (Kompakt)'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 pt-1 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={autoPrint}
-              onChange={(e) => handleToggleAutoPrint(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 text-[#1976F3] focus:ring-[#1976F3]"
-            />
-            <span>Ödəniş təsdiqləndikdə (F12) avtomatik çap pəncərəsini aç</span>
-          </label>
-
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
             <button
               type="submit"
               disabled={saving}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-semibold text-white bg-[#1976F3] hover:bg-[#1565D8] disabled:opacity-60 rounded-lg cursor-pointer"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-semibold text-white bg-[#1976F3] hover:bg-[#1565D8] disabled:opacity-60 rounded-lg cursor-pointer shrink-0"
             >
               <Check className="w-4 h-4" />
-              <span>{saving ? 'Yadda saxlanılır...' : 'Ayarları yadda saxla'}</span>
+              <span>
+                {saving ? 'Yadda saxlanılır...' : 'Seçilmiş çek formasını yadda saxla'}
+              </span>
             </button>
           </div>
         </form>
       </section>
 
-      {/* Right Column: Screen Lock, Appearance & USB Barcode Scanner */}
+      {/* Right Column: Live Receipt Preview + Screen Lock, Appearance & Scanner */}
       <div className="space-y-5">
+        <section className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+          <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-[#1976F3] dark:text-blue-400 inline-flex items-center justify-center shrink-0">
+                <Eye className="w-4 h-4" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  Canlı Çek Önizləməsi
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  {activeTemplateMeta.name} · {form.paperWidth}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 space-y-4">
+            <ThermalReceipt
+              receipt={samplePreviewReceipt}
+              settings={form}
+              enablePrintPortal
+            />
+            <ReceiptActionControls
+              receipt={samplePreviewReceipt}
+              settings={form}
+            />
+          </div>
+        </section>
         <section className="bg-white dark:bg-[#131C31] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3.5 shadow-xs">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2.5">

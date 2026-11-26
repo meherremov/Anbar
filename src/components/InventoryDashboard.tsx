@@ -41,6 +41,8 @@ import {
   DEFAULT_CATEGORIES,
   FIELD_LIMITS,
   getNetSaleAmount,
+  getSaleCostAmount,
+  getSaleNetProfit,
   type ActiveView,
   type AuthorizedUser,
   type BarcodeScanResult,
@@ -319,6 +321,20 @@ export function InventoryDashboard({
     return map;
   }, [products]);
 
+  const productCostMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of products) {
+      if (
+        typeof p.purchasePrice === 'number' &&
+        !Number.isNaN(p.purchasePrice) &&
+        p.purchasePrice >= 0
+      ) {
+        map.set(p.id, p.purchasePrice);
+      }
+    }
+    return map;
+  }, [products]);
+
   const metrics = useMemo(() => {
     let totalUnits = 0;
     let totalValue = 0;
@@ -334,6 +350,9 @@ export function InventoryDashboard({
     }
 
     let todaySalesRevenue = 0;
+    let todaySalesCost = 0;
+    let todaySalesProfit = 0;
+    let todayHasCost = false;
     const currentDate = new Date();
     const startOfToday = new Date(
       currentDate.getFullYear(),
@@ -344,6 +363,13 @@ export function InventoryDashboard({
       const ms = getRecordTimestampMs(s.soldAt, s.id);
       if (ms >= startOfToday) {
         todaySalesRevenue += getNetSaleAmount(s);
+        const cost = getSaleCostAmount(s, productCostMap);
+        const profit = getSaleNetProfit(s, productCostMap);
+        if (cost !== null && profit !== null) {
+          todaySalesCost += cost;
+          todaySalesProfit += profit;
+          todayHasCost = true;
+        }
       }
     }
 
@@ -352,9 +378,12 @@ export function InventoryDashboard({
       totalUnits,
       totalValue,
       lowOrOutCount,
-      todaySalesRevenue,
+      todaySalesRevenue: Math.round(todaySalesRevenue * 100) / 100,
+      todaySalesCost: Math.round(todaySalesCost * 100) / 100,
+      todaySalesProfit: Math.round(todaySalesProfit * 100) / 100,
+      todayHasCost,
     };
-  }, [products, sales, todayDateKey]);
+  }, [products, productCostMap, sales, todayDateKey]);
 
   const latestSale = useMemo(() => {
     if (sales.length === 0) return null;
@@ -489,8 +518,8 @@ export function InventoryDashboard({
         };
       case 'sales':
         return {
-          title: 'Satış Hesabatı',
-          subtitle: 'Tamamlanmış satışlar, çek tarixçəsi və gəlir analitikası',
+          title: 'Günlük Satışlar və Mənfəət',
+          subtitle: 'Günlük satış siyahısı, maya dəyəri və xalis gəlir hesablaması',
           Icon: BarChart3,
         };
       case 'users':
@@ -710,7 +739,7 @@ export function InventoryDashboard({
                     : 'text-slate-300 hover:bg-white/10 hover:text-white'
                 }`}
               >
-                <span className="truncate">Satış Hesabatı</span>
+                <span className="truncate">Günlük Satışlar</span>
                 <span className="font-mono tabular-nums opacity-80">
                   {sales.length}
                 </span>
@@ -977,6 +1006,7 @@ export function InventoryDashboard({
             <SalesReportModule
               sales={sales}
               productIconMap={productIconMap}
+              productCostMap={productCostMap}
               loading={loading}
               onOpenSaleModal={() => handleNavSelect('pos')}
               onOpenReceiptSettings={onOpenReceiptSettings}
@@ -1132,6 +1162,20 @@ export function InventoryDashboard({
                   <div className="text-2xl font-bold text-[#05A660] dark:text-emerald-400 font-mono tabular-nums mt-1">
                     {formatPrice(metrics.todaySalesRevenue)}
                   </div>
+                  {metrics.todayHasCost ? (
+                    <div className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-400 mt-1">
+                      Maya: {metrics.todaySalesCost.toFixed(2)} · Xalis:{' '}
+                      <span
+                        className={
+                          metrics.todaySalesProfit < 0
+                            ? 'text-red-700 dark:text-red-400 font-semibold'
+                            : 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                        }
+                      >
+                        {metrics.todaySalesProfit.toFixed(2)} AZN
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
                 <div
                   className={`p-4 sm:p-5 col-span-2 md:col-span-1 ${
@@ -1168,6 +1212,7 @@ export function InventoryDashboard({
               <SalesReportModule
                 sales={sales}
                 productIconMap={productIconMap}
+                productCostMap={productCostMap}
                 loading={loading}
                 compact
                 onOpenFullReport={() => handleNavSelect('sales', 'all')}
