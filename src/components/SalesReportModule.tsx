@@ -2,7 +2,7 @@ import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
-  Download,
+  FileSpreadsheet,
   Printer,
   Receipt,
   RotateCcw,
@@ -23,12 +23,14 @@ import {
   type SaleRecord,
   type StationeryIconId,
 } from '../types/inventory';
+import { generateSalesExcelBlob } from '../utils/excelSalesExport';
 import { ProductThumb } from './ProductThumb';
 
 interface SalesReportModuleProps {
   sales: SaleRecord[];
   productIconMap?: Map<string, StationeryIconId>;
   productCostMap?: Map<string, number>;
+  storeName?: string;
   loading: boolean;
   compact?: boolean;
   onOpenFullReport?: () => void;
@@ -110,14 +112,6 @@ function getSaleMs(sale: SaleRecord): number {
   return Date.now();
 }
 
-function csvCell(value: string | number): string {
-  const str = String(value);
-  if (str.includes('"') || str.includes(',') || str.includes(';') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
 interface SalesFinancialSummary {
   count: number;
   totalUnits: number;
@@ -182,6 +176,7 @@ export function SalesReportModule({
   sales,
   productIconMap,
   productCostMap,
+  storeName,
   loading,
   compact = false,
   onOpenFullReport,
@@ -194,6 +189,7 @@ export function SalesReportModule({
   const [period, setPeriod] = useState<PeriodFilter>('today');
   const [selectedDate, setSelectedDate] = useState<string>(() => getLocalDateInputValue());
   const [queryText, setQueryText] = useState<string>('');
+  const [exportingExcel, setExportingExcel] = useState<boolean>(false);
 
   const todayKey = getLocalDateInputValue();
 
@@ -307,94 +303,47 @@ export function SalesReportModule({
     return 'Bütün Satışların Siyahısı';
   }, [compact, period, todayKey, selectedDate]);
 
-  const handleExportCsv = () => {
-    if (filteredSales.length === 0) return;
+  const handleExportExcel = async () => {
+    if (filteredSales.length === 0 || exportingExcel) return;
+    setExportingExcel(true);
+    try {
+      const periodLabel =
+        period === 'today'
+          ? `Bu gün (${formatDisplayDateFromKey(todayKey)})`
+          : period === 'date'
+          ? `Tarix: ${formatDisplayDateFromKey(selectedDate)}`
+          : period === 'week'
+          ? 'Son 7 gün'
+          : period === 'month'
+          ? 'Bu ay'
+          : 'Bütün satışlar';
 
-    const headers = [
-      'Tarix',
-      'Çek nömrəsi',
-      'Ödəniş üsulu',
-      'Məhsul',
-      'Barkod',
-      'Kateqoriya',
-      'Satılan miqdar',
-      'Qaytarılan miqdar',
-      'Xalis miqdar',
-      'Vahid',
-      'Vahid satış qiyməti (AZN)',
-      'Vahid maya dəyəri (AZN)',
-      'Satış məbləği (AZN)',
-      'Maya dəyəri (AZN)',
-      'Xalis gəlir (AZN)',
-    ];
+      const fileDate =
+        period === 'today'
+          ? todayKey
+          : period === 'date'
+          ? selectedDate
+          : `${period}-${todayKey}`;
 
-    const rows = filteredSales.map((s) => {
-      const returnedQty = s.returnedQuantity ?? 0;
-      const netQty = getNetSaleQuantity(s);
-      const netAmt = getNetSaleAmount(s);
-      const unitCost = getSaleUnitCost(s, productCostMap);
-      const costAmt = getSaleCostAmount(s, productCostMap);
-      const profitAmt = getSaleNetProfit(s, productCostMap);
+      const blob = await generateSalesExcelBlob({
+        sales: filteredSales,
+        productCostMap,
+        storeName: storeName || 'MƏKTƏBLİ',
+        periodLabel,
+        fileSlug: fileDate,
+      });
 
-      return [
-        formatDateTime(s.soldAt, s.id),
-        s.receiptNumber || 'Tək satış',
-        formatPaymentMethodLabel(s.paymentMethod),
-        s.productName,
-        s.barcode,
-        s.category,
-        s.quantity.toFixed(2),
-        returnedQty.toFixed(2),
-        netQty.toFixed(2),
-        s.unit,
-        s.unitPrice.toFixed(2),
-        unitCost !== undefined ? unitCost.toFixed(2) : '',
-        netAmt.toFixed(2),
-        costAmt !== null ? costAmt.toFixed(2) : '',
-        profitAmt !== null ? profitAmt.toFixed(2) : '',
-      ]
-        .map(csvCell)
-        .join(';');
-    });
-
-    const totalsRow = [
-      'CƏMİ',
-      '',
-      '',
-      `${summary.count} satış`,
-      '',
-      '',
-      '',
-      '',
-      summary.totalUnits.toFixed(2),
-      '',
-      '',
-      '',
-      summary.totalRevenue.toFixed(2),
-      summary.totalCost.toFixed(2),
-      summary.totalProfit.toFixed(2),
-    ]
-      .map(csvCell)
-      .join(';');
-
-    const csvContent = `\uFEFF${headers.map(csvCell).join(';')}\n${rows.join(
-      '\n'
-    )}\n${totalsRow}`;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const fileDate =
-      period === 'today'
-        ? todayKey
-        : period === 'date'
-        ? selectedDate
-        : `${period}-${todayKey}`;
-    link.href = url;
-    link.download = `satislar-${fileDate}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `satislar-${fileDate}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingExcel(false);
+    }
   };
 
   if (loading) {
@@ -590,13 +539,13 @@ export function SalesReportModule({
 
               <button
                 type="button"
-                disabled={filteredSales.length === 0}
-                onClick={handleExportCsv}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg whitespace-nowrap cursor-pointer"
-                title="Siyahını Excel (CSV) faylı kimi yüklə"
+                disabled={filteredSales.length === 0 || exportingExcel}
+                onClick={handleExportExcel}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-45 disabled:cursor-not-allowed rounded-lg whitespace-nowrap cursor-pointer"
+                title="Siyahını və qrafikləri Excel (.xlsx) faylı kimi yüklə"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Excel (CSV)</span>
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>{exportingExcel ? 'Hazırlanır...' : 'Excel (.xlsx)'}</span>
               </button>
 
               <button

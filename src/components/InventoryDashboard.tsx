@@ -1007,6 +1007,7 @@ export function InventoryDashboard({
               sales={sales}
               productIconMap={productIconMap}
               productCostMap={productCostMap}
+              storeName={receiptSettings.storeName}
               loading={loading}
               onOpenSaleModal={() => handleNavSelect('pos')}
               onOpenReceiptSettings={onOpenReceiptSettings}
