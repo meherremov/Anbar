@@ -16,6 +16,7 @@ import {
   Trash2,
   Wallet,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   useCallback,
@@ -33,8 +34,18 @@ import type {
   ReceiptData,
   ReceiptSettings,
 } from '../types/inventory';
+import { parseLocaleNumber } from '../utils/barcodeDecoder';
 import { triggerBrowserPrint } from '../utils/thermalPrinter';
 import { ProductThumb } from './ProductThumb';
+import { QuickAddModal } from './QuickAddModal';
+
+function getCartItemUnitPrice(item: CheckoutCartItem): number {
+  return typeof item.unitPriceOverride === 'number' &&
+    Number.isFinite(item.unitPriceOverride) &&
+    item.unitPriceOverride >= 0
+    ? item.unitPriceOverride
+    : item.product.salePrice;
+}
 
 const QUICK_DISCOUNT_PERCENTS = [10, 15, 20] as const;
 
@@ -120,6 +131,7 @@ export function PosWorkspace({
   onReprintLatestSale,
 }: PosWorkspaceProps) {
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
   const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
   const [itemDiscountModes, setItemDiscountModes] = useState<Record<string, 'percent' | 'amount'>>({});
   const [barcodeInput, setBarcodeInput] = useState<string>('');
@@ -130,6 +142,7 @@ export function PosWorkspace({
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const [quickAddOpen, setQuickAddOpen] = useState<boolean>(false);
   const [pickerQuery, setPickerQuery] = useState<string>('');
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [statusBanner, setStatusBanner] = useState<{
@@ -150,10 +163,10 @@ export function PosWorkspace({
   const lastExternalSeqRef = useRef<number>(externalScan?.seq ?? 0);
 
   useEffect(() => {
-    if (!hasBlockingModal && !pickerOpen) {
+    if (!hasBlockingModal && !pickerOpen && !quickAddOpen) {
       scanInputRef.current?.focus();
     }
-  }, [hasBlockingModal, pickerOpen]);
+  }, [hasBlockingModal, pickerOpen, quickAddOpen]);
 
   // Dismiss suggestion dropdown on outside click
   useEffect(() => {
@@ -175,7 +188,7 @@ export function PosWorkspace({
     }
   }, [pickerOpen]);
 
-  // Keep cart item details synced with latest inventory updates (price, stock, icon, name)
+  // Keep cart item details synced with latest inventory updates (price, stock, icon, name, unit)
   useEffect(() => {
     setCart((prev) => {
       if (prev.length === 0) return prev;
@@ -188,10 +201,34 @@ export function PosWorkspace({
             latest.salePrice !== item.product.salePrice ||
             latest.quantity !== item.product.quantity ||
             latest.icon !== item.product.icon ||
-            latest.barcode !== item.product.barcode)
+            latest.barcode !== item.product.barcode ||
+            latest.unit !== item.product.unit ||
+            latest.category !== item.product.category)
         ) {
           changed = true;
-          return { ...item, product: latest };
+          const nextQty =
+            latest.quantity > 0 && item.quantity > latest.quantity
+              ? Math.round(latest.quantity * 100) / 100
+              : item.quantity;
+          const effectivePrice =
+            typeof item.unitPriceOverride === 'number' &&
+            Number.isFinite(item.unitPriceOverride) &&
+            item.unitPriceOverride >= 0
+              ? item.unitPriceOverride
+              : latest.salePrice;
+          const gross = Math.round(nextQty * effectivePrice * 100) / 100;
+          const nextDiscount =
+            typeof item.discountPercent === 'number' && item.discountPercent > 0
+              ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
+              : typeof item.discountAmount === 'number' && item.discountAmount > 0
+              ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+              : undefined;
+          return {
+            ...item,
+            product: latest,
+            quantity: nextQty,
+            discountAmount: nextDiscount && nextDiscount > 0 ? nextDiscount : undefined,
+          };
         }
         return item;
       });
@@ -223,6 +260,13 @@ export function PosWorkspace({
       return;
     }
 
+    setQtyDrafts((prev) => {
+      if (!(product.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[product.id];
+      return next;
+    });
+
     setCart((prev) => {
       const idx = prev.findIndex((i) => i.product.id === product.id);
       if (idx >= 0) {
@@ -236,7 +280,8 @@ export function PosWorkspace({
         }
         const updated = [...prev];
         const nextQty = Math.round((curQty + 1) * 100) / 100;
-        const gross = Math.round(nextQty * product.salePrice * 100) / 100;
+        const unitPrice = getCartItemUnitPrice(prev[idx]);
+        const gross = Math.round(nextQty * unitPrice * 100) / 100;
         const nextDiscountAmount =
           typeof prev[idx].discountPercent === 'number' && prev[idx].discountPercent > 0
             ? Math.min(gross, Math.round(gross * prev[idx].discountPercent!) / 100)
@@ -256,13 +301,92 @@ export function PosWorkspace({
         return updated;
       }
 
+      const initialQty =
+        product.quantity < 1 ? Math.round(product.quantity * 100) / 100 : 1;
       setStatusBanner({
         tone: 'ok',
         text: `Səbətə əlavə edildi: ${product.name}`,
       });
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: initialQty }];
     });
   }, []);
+
+  const cartQuantities = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of cart) {
+      map.set(item.product.id, item.quantity);
+    }
+    return map;
+  }, [cart]);
+
+  const handleQuickAddConfirm = useCallback(
+    (product: Product, addedQty: number, unitPrice: number) => {
+      if (product.quantity <= 0 || addedQty <= 0) return;
+      const normalizedPrice = Math.round(unitPrice * 100) / 100;
+      const priceOverride =
+        Math.abs(normalizedPrice - product.salePrice) > 0.001
+          ? normalizedPrice
+          : undefined;
+
+      setQtyDrafts((prev) => {
+        if (!(product.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+
+      setCart((prev) => {
+        const idx = prev.findIndex((i) => i.product.id === product.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          const nextQty = Math.min(
+            product.quantity,
+            Math.round((prev[idx].quantity + addedQty) * 100) / 100
+          );
+          const effectivePrice = priceOverride ?? product.salePrice;
+          const gross = Math.round(nextQty * effectivePrice * 100) / 100;
+          const nextDiscountAmount =
+            typeof prev[idx].discountPercent === 'number' &&
+            prev[idx].discountPercent! > 0
+              ? Math.min(gross, Math.round(gross * prev[idx].discountPercent!) / 100)
+              : typeof prev[idx].discountAmount === 'number'
+              ? Math.min(gross, prev[idx].discountAmount!)
+              : undefined;
+          updated[idx] = {
+            ...prev[idx],
+            product,
+            quantity: nextQty,
+            unitPriceOverride: priceOverride,
+            discountAmount: nextDiscountAmount,
+          };
+          setStatusBanner({
+            tone: 'ok',
+            text: `Tez əlavə: ${product.name} (${nextQty} ${product.unit} · ${effectivePrice.toFixed(2)} AZN)`,
+          });
+          return updated;
+        }
+
+        const initialQty = Math.min(
+          product.quantity,
+          Math.max(0.01, Math.round(addedQty * 100) / 100)
+        );
+        const effectivePrice = priceOverride ?? product.salePrice;
+        setStatusBanner({
+          tone: 'ok',
+          text: `Tez əlavə edildi: ${product.name} (${initialQty} ${product.unit} · ${effectivePrice.toFixed(2)} AZN)`,
+        });
+        return [
+          ...prev,
+          {
+            product,
+            quantity: initialQty,
+            ...(priceOverride !== undefined ? { unitPriceOverride: priceOverride } : {}),
+          },
+        ];
+      });
+    },
+    []
+  );
 
   const handleBarcodeHit = useCallback(
     (scan: BarcodeScanResult) => {
@@ -313,18 +437,21 @@ export function PosWorkspace({
   useEffect(() => {
     if (!externalScan || externalScan.seq === lastExternalSeqRef.current) return;
     lastExternalSeqRef.current = externalScan.seq;
-    if (hasBlockingModal || pickerOpen) return;
+    if (hasBlockingModal || pickerOpen || quickAddOpen) return;
     handleBarcodeHit(externalScan.scan);
-  }, [externalScan, hasBlockingModal, pickerOpen, handleBarcodeHit]);
+  }, [externalScan, hasBlockingModal, pickerOpen, quickAddOpen, handleBarcodeHit]);
 
   const subtotalAmount = useMemo(() => {
-    const sum = cart.reduce((acc, item) => acc + item.quantity * item.product.salePrice, 0);
+    const sum = cart.reduce(
+      (acc, item) => acc + item.quantity * getCartItemUnitPrice(item),
+      0
+    );
     return Math.round(sum * 100) / 100;
   }, [cart]);
 
   const itemsDiscountTotal = useMemo(() => {
     const sum = cart.reduce((acc, item) => {
-      const gross = Math.round(item.quantity * item.product.salePrice * 100) / 100;
+      const gross = Math.round(item.quantity * getCartItemUnitPrice(item) * 100) / 100;
       const itemDisc =
         typeof item.discountAmount === 'number' && item.discountAmount > 0
           ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
@@ -340,7 +467,7 @@ export function PosWorkspace({
 
   const discountAmount = useMemo(() => {
     if (!discountInput.trim()) return 0;
-    const val = Number(discountInput);
+    const val = parseLocaleNumber(discountInput);
     if (Number.isNaN(val) || val <= 0) return 0;
     if (discountMode === 'percent') {
       const pct = Math.min(100, val);
@@ -358,7 +485,7 @@ export function PosWorkspace({
 
   const parsedCashReceived = useMemo(() => {
     if (paymentMethod !== 'cash' || !cashReceivedInput.trim()) return undefined;
-    const val = Number(cashReceivedInput);
+    const val = parseLocaleNumber(cashReceivedInput);
     if (Number.isNaN(val) || val < 0) return undefined;
     return Math.round(val * 100) / 100;
   }, [paymentMethod, cashReceivedInput]);
@@ -404,16 +531,29 @@ export function PosWorkspace({
     scanInputRef.current?.focus();
   };
 
-  const updateCartQty = (productId: string, nextQtyRaw: number) => {
+  const updateCartQty = (productId: string, nextQtyRaw: number, clearDraft = true) => {
     if (Number.isNaN(nextQtyRaw) || nextQtyRaw <= 0) return;
+    if (clearDraft) {
+      setQtyDrafts((prev) => {
+        if (!(productId in prev)) return prev;
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+    }
     setCart((prev) =>
       prev.map((item) => {
         if (item.product.id !== productId) return item;
-        const clamped = Math.min(
-          item.product.quantity,
-          Math.max(0.01, Math.round(nextQtyRaw * 100) / 100)
-        );
-        const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
+        const rounded = Math.max(0.01, Math.round(nextQtyRaw * 100) / 100);
+        const clamped = Math.min(item.product.quantity, rounded);
+        if (rounded > item.product.quantity) {
+          setStatusBanner({
+            tone: 'warn',
+            text: `"${item.product.name}" üzrə maksimum stok (${item.product.quantity} ${item.product.unit}) keçilə bilməz.`,
+          });
+        }
+        const gross =
+          Math.round(clamped * getCartItemUnitPrice(item) * 100) / 100;
         const clampedDiscount =
           typeof item.discountPercent === 'number' && item.discountPercent > 0
             ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
@@ -429,6 +569,36 @@ export function PosWorkspace({
     );
   };
 
+  const handleQtyInputChange = (item: CheckoutCartItem, rawValue: string) => {
+    const cleaned = rawValue.replace(/[^\d.,]/g, '');
+    const parsed = parseLocaleNumber(cleaned);
+
+    if (!Number.isNaN(parsed) && parsed > item.product.quantity) {
+      const maxQty = Math.round(item.product.quantity * 100) / 100;
+      setQtyDrafts((prev) => ({ ...prev, [item.product.id]: String(maxQty) }));
+      updateCartQty(item.product.id, maxQty, false);
+      setStatusBanner({
+        tone: 'warn',
+        text: `"${item.product.name}" üzrə maksimum mövcud stok ${maxQty} ${item.product.unit}-dir.`,
+      });
+      return;
+    }
+
+    setQtyDrafts((prev) => ({ ...prev, [item.product.id]: cleaned }));
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      updateCartQty(item.product.id, parsed, false);
+    }
+  };
+
+  const handleQtyInputBlur = (productId: string) => {
+    setQtyDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+  };
+
   const applyItemPercentDiscount = (productId: string, percent: number) => {
     const targetItem = cart.find((i) => i.product.id === productId);
     if (!targetItem) return;
@@ -438,7 +608,8 @@ export function PosWorkspace({
       return;
     }
 
-    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const gross =
+      Math.round(targetItem.quantity * getCartItemUnitPrice(targetItem) * 100) / 100;
     const clampedPct = Math.min(100, Math.max(0, Math.round(percent * 100) / 100));
     const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
 
@@ -471,7 +642,8 @@ export function PosWorkspace({
     const targetItem = cart.find((i) => i.product.id === productId);
     if (!targetItem) return;
 
-    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const gross =
+      Math.round(targetItem.quantity * getCartItemUnitPrice(targetItem) * 100) / 100;
     const mode = itemDiscountModes[productId] ?? 'percent';
     const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
     if (!rawStr) {
@@ -479,7 +651,7 @@ export function PosWorkspace({
       return;
     }
 
-    const val = Number(rawStr);
+    const val = parseLocaleNumber(rawStr);
     if (Number.isNaN(val) || val < 0) {
       setStatusBanner({
         tone: 'warn',
@@ -565,6 +737,12 @@ export function PosWorkspace({
 
   const removeCartItem = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setQtyDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
     setItemDiscountDrafts((prev) => {
       if (!(productId in prev)) return prev;
       const next = { ...prev };
@@ -581,6 +759,7 @@ export function PosWorkspace({
 
   const handleClearCart = useCallback(() => {
     setCart([]);
+    setQtyDrafts({});
     setItemDiscountDrafts({});
     setItemDiscountModes({});
     setDiscountInput('');
@@ -650,7 +829,9 @@ export function PosWorkspace({
       });
       setLastReceipt(receipt);
       setCart([]);
+      setQtyDrafts({});
       setItemDiscountDrafts({});
+      setItemDiscountModes({});
       setDiscountInput('');
       setCashReceivedInput('');
       setBarcodeInput('');
@@ -700,7 +881,10 @@ export function PosWorkspace({
       if (hasBlockingModal) return;
 
       if (e.key === 'Escape') {
-        if (pickerOpen) {
+        if (quickAddOpen) {
+          e.preventDefault();
+          setQuickAddOpen(false);
+        } else if (pickerOpen) {
           e.preventDefault();
           setPickerOpen(false);
         } else {
@@ -708,6 +892,8 @@ export function PosWorkspace({
         }
         return;
       }
+
+      if (quickAddOpen) return;
 
       if (e.key === 'F2') {
         e.preventDefault();
@@ -747,6 +933,7 @@ export function PosWorkspace({
   }, [
     hasBlockingModal,
     pickerOpen,
+    quickAddOpen,
     handleClearCart,
     onOpenReturnModal,
     handlePrintAction,
@@ -790,6 +977,16 @@ export function PosWorkspace({
                 </button>
               ) : null}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setQuickAddOpen(true)}
+              title="Məhsulu adı ilə axtarıb miqdar və qiyməti təyin edərək əlavə et"
+              className="px-3 sm:px-4 rounded-xl bg-[#05A660] hover:bg-[#048C50] text-white inline-flex items-center justify-center gap-1.5 text-xs sm:text-sm font-bold shadow-xs transition-colors shrink-0 cursor-pointer"
+            >
+              <Zap className="w-4 h-4 shrink-0" />
+              <span>Tez Əlavə</span>
+            </button>
 
             <button
               type="button"
@@ -870,6 +1067,14 @@ export function PosWorkspace({
                   >
                     Məhsul Əlavə Et (F2)
                   </button>{' '}
+                  və ya{' '}
+                  <button
+                    type="button"
+                    onClick={() => setQuickAddOpen(true)}
+                    className="font-semibold text-[#05A660] dark:text-emerald-400 hover:underline cursor-pointer"
+                  >
+                    Tez Əlavə
+                  </button>{' '}
                   düyməsindən seçin.
                 </p>
               </div>
@@ -891,8 +1096,10 @@ export function PosWorkspace({
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {cart.map((item, idx) => {
+                      const unitPrice = getCartItemUnitPrice(item);
+                      const hasCustomPrice = typeof item.unitPriceOverride === 'number';
                       const grossLineTotal =
-                        Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                        Math.round(item.quantity * unitPrice * 100) / 100;
                       const appliedItemDiscount =
                         typeof item.discountAmount === 'number' && item.discountAmount > 0
                           ? Math.min(grossLineTotal, item.discountAmount)
@@ -973,11 +1180,10 @@ export function PosWorkspace({
 
                                   <div className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-hidden">
                                     <input
-                                      type="number"
-                                      min="0"
-                                      max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
-                                      step="0.01"
+                                      type="text"
+                                      inputMode="decimal"
                                       value={draftValue}
+                                      onFocus={(e) => e.currentTarget.select()}
                                       onChange={(e) =>
                                         setItemDiscountDrafts((prev) => ({
                                           ...prev,
@@ -1023,45 +1229,69 @@ export function PosWorkspace({
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-center font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                            {item.product.salePrice.toFixed(2)}
+                            <div>{unitPrice.toFixed(2)}</div>
+                            {hasCustomPrice ? (
+                              <div className="text-[10px] font-semibold text-[#1976F3] dark:text-blue-400">
+                                Xüsusi qiymət
+                              </div>
+                            ) : null}
                           </td>
                           <td className="py-3.5 px-4 text-center">
-                            <div className="inline-flex items-center border border-slate-200 dark:border-slate-700 rounded-lg bg-[#F8FAFC] dark:bg-slate-900 overflow-hidden">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQty(item.product.id, item.quantity - 1)
-                                }
-                                disabled={item.quantity <= 1}
-                                className="px-2.5 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-                                aria-label="Miqdarı azalt"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <input
-                                type="number"
-                                min="0.01"
-                                max={item.product.quantity}
-                                step="any"
-                                value={item.quantity}
-                                onChange={(e) =>
-                                  updateCartQty(item.product.id, Number(e.target.value))
-                                }
-                                aria-label="Satış miqdarı"
-                                className="w-12 text-center py-1 text-sm font-bold tabular-nums text-slate-900 dark:text-white bg-transparent focus:outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQty(item.product.id, item.quantity + 1)
-                                }
-                                disabled={item.quantity >= item.product.quantity}
-                                className="px-2.5 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-                                aria-label="Miqdarı artır"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                            {(() => {
+                              const minStep =
+                                item.product.quantity < 1
+                                  ? Math.round(item.product.quantity * 100) / 100
+                                  : 1;
+                              return (
+                                <div className="inline-flex items-center border border-slate-200 dark:border-slate-700 rounded-lg bg-[#F8FAFC] dark:bg-slate-900 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateCartQty(
+                                        item.product.id,
+                                        Math.max(
+                                          minStep,
+                                          Math.round((item.quantity - 1) * 100) / 100
+                                        ),
+                                        true
+                                      )
+                                    }
+                                    disabled={item.quantity <= minStep}
+                                    className="px-2.5 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                                    aria-label="Miqdarı azalt"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={qtyDrafts[item.product.id] ?? String(item.quantity)}
+                                    onFocus={(e) => e.currentTarget.select()}
+                                    onChange={(e) => handleQtyInputChange(item, e.target.value)}
+                                    onBlur={() => handleQtyInputBlur(item.product.id)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        e.currentTarget.blur();
+                                      }
+                                    }}
+                                    aria-label="Satış miqdarı"
+                                    className="w-14 text-center py-1 text-sm font-bold tabular-nums text-slate-900 dark:text-white bg-transparent focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateCartQty(item.product.id, item.quantity + 1, true)
+                                    }
+                                    disabled={item.quantity >= item.product.quantity}
+                                    className="px-2.5 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                                    aria-label="Miqdarı artır"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-3.5 px-4 text-center font-bold text-slate-900 dark:text-white tabular-nums">
                             {appliedItemDiscount > 0 ? (
@@ -1097,8 +1327,10 @@ export function PosWorkspace({
               {/* Mobile POS Cart Cards */}
               <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
                 {cart.map((item, idx) => {
+                  const unitPrice = getCartItemUnitPrice(item);
+                  const hasCustomPrice = typeof item.unitPriceOverride === 'number';
                   const grossLineTotal =
-                    Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                    Math.round(item.quantity * unitPrice * 100) / 100;
                   const appliedItemDiscount =
                     typeof item.discountAmount === 'number' && item.discountAmount > 0
                       ? Math.min(grossLineTotal, item.discountAmount)
@@ -1130,8 +1362,15 @@ export function PosWorkspace({
                             <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
                               {idx + 1}. {item.product.name}
                             </div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                              (BAR: {item.product.barcode}) · {item.product.salePrice.toFixed(2)} AZN
+                            <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums flex flex-wrap items-center gap-1.5">
+                              <span>
+                                (BAR: {item.product.barcode}) · {unitPrice.toFixed(2)} AZN
+                              </span>
+                              {hasCustomPrice ? (
+                                <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-sans font-semibold text-[10px]">
+                                  Xüsusi qiymət
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -1167,11 +1406,10 @@ export function PosWorkspace({
 
                         <div className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-hidden">
                           <input
-                            type="number"
-                            min="0"
-                            max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
-                            step="0.01"
+                            type="text"
+                            inputMode="decimal"
                             value={draftValue}
+                            onFocus={(e) => e.currentTarget.select()}
                             onChange={(e) =>
                               setItemDiscountDrafts((prev) => ({
                                 ...prev,
@@ -1229,27 +1467,61 @@ export function PosWorkspace({
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <div className="inline-flex items-center border border-slate-200 dark:border-slate-700 rounded-lg bg-[#F8FAFC] dark:bg-slate-900">
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.product.id, item.quantity - 1)}
-                            disabled={item.quantity <= 1}
-                            className="px-3 py-1.5 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="px-3 py-1.5 text-sm font-bold tabular-nums text-slate-900 dark:text-white">
-                            {item.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.product.id, item.quantity + 1)}
-                            disabled={item.quantity >= item.product.quantity}
-                            className="px-3 py-1.5 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        {(() => {
+                          const minStep =
+                            item.product.quantity < 1
+                              ? Math.round(item.product.quantity * 100) / 100
+                              : 1;
+                          return (
+                            <div className="inline-flex items-center border border-slate-200 dark:border-slate-700 rounded-lg bg-[#F8FAFC] dark:bg-slate-900 overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateCartQty(
+                                    item.product.id,
+                                    Math.max(
+                                      minStep,
+                                      Math.round((item.quantity - 1) * 100) / 100
+                                    ),
+                                    true
+                                  )
+                                }
+                                disabled={item.quantity <= minStep}
+                                className="px-3 py-1.5 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
+                                aria-label="Miqdarı azalt"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={qtyDrafts[item.product.id] ?? String(item.quantity)}
+                                onFocus={(e) => e.currentTarget.select()}
+                                onChange={(e) => handleQtyInputChange(item, e.target.value)}
+                                onBlur={() => handleQtyInputBlur(item.product.id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.currentTarget.blur();
+                                  }
+                                }}
+                                aria-label="Satış miqdarı"
+                                className="w-14 text-center py-1.5 text-sm font-bold tabular-nums text-slate-900 dark:text-white bg-transparent focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateCartQty(item.product.id, item.quantity + 1, true)
+                                }
+                                disabled={item.quantity >= item.product.quantity}
+                                className="px-3 py-1.5 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
+                                aria-label="Miqdarı artır"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })()}
                         <span className="text-sm font-bold text-slate-900 dark:text-white tabular-nums">
                           {appliedItemDiscount > 0 ? (
                             <span>
@@ -1403,11 +1675,10 @@ export function PosWorkspace({
                 <div className="flex items-center gap-1">
                   <input
                     id="pos-discount-input"
-                    type="number"
-                    min="0"
-                    max={discountMode === 'percent' ? 100 : netAfterItemDiscounts}
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={discountInput}
+                    onFocus={(e) => e.currentTarget.select()}
                     onChange={(e) => setDiscountInput(e.target.value)}
                     placeholder="0"
                     className="w-18 text-right px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-bold tabular-nums text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
@@ -1565,10 +1836,10 @@ export function PosWorkspace({
                 </label>
                 <input
                   id="pos-cash-received"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={cashReceivedInput}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => setCashReceivedInput(e.target.value)}
                   placeholder={payableTotal.toFixed(2)}
                   className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-mono tabular-nums font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1976F3]"
@@ -1630,6 +1901,17 @@ export function PosWorkspace({
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    setQuickAddOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#05A660] hover:bg-[#048C50] rounded-lg cursor-pointer"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Tez Əlavə</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -1715,6 +1997,14 @@ export function PosWorkspace({
           </div>
         </div>
       ) : null}
+
+      <QuickAddModal
+        isOpen={quickAddOpen}
+        products={products}
+        cartQuantities={cartQuantities}
+        onClose={() => setQuickAddOpen(false)}
+        onConfirmAdd={handleQuickAddConfirm}
+      />
     </div>
   );
 }

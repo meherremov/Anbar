@@ -194,6 +194,7 @@ export const DEFAULT_SCREEN_LOCK_SETTINGS: ScreenLockSettings = {
 export interface CheckoutCartItem {
   product: Product;
   quantity: number;
+  unitPriceOverride?: number;
   discountAmount?: number;
   discountPercent?: number;
 }

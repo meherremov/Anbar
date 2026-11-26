@@ -51,6 +51,8 @@ export function BarcodeScannerModal({
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const detectedLockRef = useRef<boolean>(false);
+  const galleryPreviewRef = useRef<string | null>(null);
+  galleryPreviewRef.current = galleryPreview;
 
   const stopCamera = useCallback(() => {
     if (controlsRef.current) {
@@ -71,13 +73,21 @@ export function BarcodeScannerModal({
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (galleryPreviewRef.current) {
+        URL.revokeObjectURL(galleryPreviewRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isOpen) {
       stopCamera();
       detectedLockRef.current = false;
       setGalleryError(null);
       setGalleryHit(null);
-      if (galleryPreview) {
-        URL.revokeObjectURL(galleryPreview);
+      if (galleryPreviewRef.current) {
+        URL.revokeObjectURL(galleryPreviewRef.current);
         setGalleryPreview(null);
       }
       return;
@@ -111,7 +121,10 @@ export function BarcodeScannerModal({
           setDevices(videoDevices);
         }
 
-        const chosenDevice = videoDevices[selectedDeviceIndex];
+        const chosenDevice =
+          videoDevices.length > 0
+            ? videoDevices[selectedDeviceIndex % videoDevices.length]
+            : undefined;
         const constraints: MediaStreamConstraints = chosenDevice?.deviceId
           ? {
               video: {

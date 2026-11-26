@@ -1,4 +1,5 @@
 import type { IScannerControls } from '@zxing/browser';
+import { BarcodeFormat } from '@zxing/library';
 import {
   AlertCircle,
   Camera,
@@ -17,6 +18,7 @@ import {
   Trash2,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   useCallback,
@@ -39,11 +41,21 @@ import {
   createCameraReader,
   decodeBarcodeFromImageFile,
   listCameras,
+  parseLocaleNumber,
 } from '../utils/barcodeDecoder';
 import { triggerBrowserPrint } from '../utils/thermalPrinter';
 import { ProductThumb } from './ProductThumb';
+import { QuickAddModal } from './QuickAddModal';
 import { ReceiptActionControls } from './ReceiptActionControls';
 import { ThermalReceipt } from './ThermalReceipt';
+
+function getCartItemUnitPrice(item: CheckoutCartItem): number {
+  return typeof item.unitPriceOverride === 'number' &&
+    Number.isFinite(item.unitPriceOverride) &&
+    item.unitPriceOverride >= 0
+    ? item.unitPriceOverride
+    : item.product.salePrice;
+}
 
 interface SaleModalProps {
   isOpen: boolean;
@@ -103,6 +115,7 @@ export function SaleModal({
 }: SaleModalProps) {
   const [inputMode, setInputMode] = useState<InputMode>('camera');
   const [cart, setCart] = useState<CheckoutCartItem[]>([]);
+  const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
   const [itemDiscountDrafts, setItemDiscountDrafts] = useState<Record<string, string>>({});
   const [itemDiscountModes, setItemDiscountModes] = useState<Record<string, 'percent' | 'amount'>>({});
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
@@ -125,6 +138,7 @@ export function SaleModal({
   const [saleError, setSaleError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [completedReceipt, setCompletedReceipt] = useState<ReceiptData | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState<boolean>(false);
 
   // Camera state
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -165,6 +179,7 @@ export function SaleModal({
 
   const resetForNewSale = useCallback(() => {
     setCart([]);
+    setQtyDrafts({});
     setItemDiscountDrafts({});
     setItemDiscountModes({});
     setPaymentMethod('cash');
@@ -174,8 +189,56 @@ export function SaleModal({
     setScanFeedback(null);
     setSaleError(null);
     setCompletedReceipt(null);
+    setQuickAddOpen(false);
     scanCooldownRef.current = false;
   }, []);
+
+  // Keep cart item details synced with latest inventory updates
+  useEffect(() => {
+    setCart((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((item) => {
+        const latest = products.find((p) => p.id === item.product.id);
+        if (
+          latest &&
+          (latest.name !== item.product.name ||
+            latest.salePrice !== item.product.salePrice ||
+            latest.quantity !== item.product.quantity ||
+            latest.icon !== item.product.icon ||
+            latest.barcode !== item.product.barcode ||
+            latest.unit !== item.product.unit)
+        ) {
+          changed = true;
+          const nextQty =
+            latest.quantity > 0 && item.quantity > latest.quantity
+              ? Math.round(latest.quantity * 100) / 100
+              : item.quantity;
+          const effectivePrice =
+            typeof item.unitPriceOverride === 'number' &&
+            Number.isFinite(item.unitPriceOverride) &&
+            item.unitPriceOverride >= 0
+              ? item.unitPriceOverride
+              : latest.salePrice;
+          const gross = Math.round(nextQty * effectivePrice * 100) / 100;
+          const nextDiscount =
+            typeof item.discountPercent === 'number' && item.discountPercent > 0
+              ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
+              : typeof item.discountAmount === 'number' && item.discountAmount > 0
+              ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
+              : undefined;
+          return {
+            ...item,
+            product: latest,
+            quantity: nextQty,
+            discountAmount: nextDiscount && nextDiscount > 0 ? nextDiscount : undefined,
+          };
+        }
+        return item;
+      });
+      return changed ? next : prev;
+    });
+  }, [products]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -202,6 +265,13 @@ export function SaleModal({
       return;
     }
 
+    setQtyDrafts((prev) => {
+      if (!(product.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[product.id];
+      return next;
+    });
+
     setCart((prev) => {
       const existingIdx = prev.findIndex((item) => item.product.id === product.id);
       if (existingIdx >= 0) {
@@ -215,7 +285,8 @@ export function SaleModal({
         }
         const updated = [...prev];
         const nextQty = Math.round((currentQty + 1) * 100) / 100;
-        const gross = Math.round(nextQty * product.salePrice * 100) / 100;
+        const unitPrice = getCartItemUnitPrice(prev[existingIdx]);
+        const gross = Math.round(nextQty * unitPrice * 100) / 100;
         const nextDiscountAmount =
           typeof prev[existingIdx].discountPercent === 'number' &&
           prev[existingIdx].discountPercent! > 0
@@ -236,11 +307,13 @@ export function SaleModal({
         return updated;
       }
 
+      const initialQty =
+        product.quantity < 1 ? Math.round(product.quantity * 100) / 100 : 1;
       setScanFeedback({
         tone: 'ok',
-        text: `Səbətə əlavə edildi: ${product.name} (1 ${product.unit})`,
+        text: `Səbətə əlavə edildi: ${product.name} (${initialQty} ${product.unit})`,
       });
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: initialQty }];
     });
     setSaleError(null);
   }, []);
@@ -299,7 +372,10 @@ export function SaleModal({
           setDevices(videoDevices);
         }
 
-        const chosenDevice = videoDevices[selectedDeviceIndex];
+        const chosenDevice =
+          videoDevices.length > 0
+            ? videoDevices[selectedDeviceIndex % videoDevices.length]
+            : undefined;
         const constraints: MediaStreamConstraints = chosenDevice?.deviceId
           ? {
               video: {
@@ -340,7 +416,7 @@ export function SaleModal({
               scanCooldownRef.current = true;
               handleBarcodeHit({
                 code: text,
-                format: String(result.getBarcodeFormat()),
+                format: BarcodeFormat[result.getBarcodeFormat()] || 'BARCODE',
               });
               window.setTimeout(() => {
                 scanCooldownRef.current = false;
@@ -386,7 +462,8 @@ export function SaleModal({
     let totalAmount = 0;
     let totalUnits = 0;
     for (const item of cart) {
-      const gross = Math.round(item.quantity * item.product.salePrice * 100) / 100;
+      const unitPrice = getCartItemUnitPrice(item);
+      const gross = Math.round(item.quantity * unitPrice * 100) / 100;
       const disc =
         typeof item.discountAmount === 'number' && item.discountAmount > 0
           ? Math.min(gross, Math.round(item.discountAmount * 100) / 100)
@@ -400,9 +477,87 @@ export function SaleModal({
     };
   }, [cart]);
 
+  const cartQuantities = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of cart) {
+      map.set(item.product.id, item.quantity);
+    }
+    return map;
+  }, [cart]);
+
+  const handleQuickAddConfirm = useCallback(
+    (product: Product, addedQty: number, unitPrice: number) => {
+      if (product.quantity <= 0 || addedQty <= 0) return;
+      const normalizedPrice = Math.round(unitPrice * 100) / 100;
+      const priceOverride =
+        Math.abs(normalizedPrice - product.salePrice) > 0.001
+          ? normalizedPrice
+          : undefined;
+
+      setQtyDrafts((prev) => {
+        if (!(product.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+
+      setCart((prev) => {
+        const existingIdx = prev.findIndex((i) => i.product.id === product.id);
+        if (existingIdx >= 0) {
+          const updated = [...prev];
+          const nextQty = Math.min(
+            product.quantity,
+            Math.round((prev[existingIdx].quantity + addedQty) * 100) / 100
+          );
+          const effectivePrice = priceOverride ?? product.salePrice;
+          const gross = Math.round(nextQty * effectivePrice * 100) / 100;
+          const nextDiscountAmount =
+            typeof prev[existingIdx].discountPercent === 'number' &&
+            prev[existingIdx].discountPercent! > 0
+              ? Math.min(gross, Math.round(gross * prev[existingIdx].discountPercent!) / 100)
+              : typeof prev[existingIdx].discountAmount === 'number'
+              ? Math.min(gross, prev[existingIdx].discountAmount!)
+              : undefined;
+          updated[existingIdx] = {
+            ...prev[existingIdx],
+            product,
+            quantity: nextQty,
+            unitPriceOverride: priceOverride,
+            discountAmount: nextDiscountAmount,
+          };
+          setScanFeedback({
+            tone: 'ok',
+            text: `Tez əlavə: ${product.name} (${nextQty} ${product.unit} · ${effectivePrice.toFixed(2)} ₼)`,
+          });
+          return updated;
+        }
+
+        const initialQty = Math.min(
+          product.quantity,
+          Math.max(0.01, Math.round(addedQty * 100) / 100)
+        );
+        const effectivePrice = priceOverride ?? product.salePrice;
+        setScanFeedback({
+          tone: 'ok',
+          text: `Tez əlavə edildi: ${product.name} (${initialQty} ${product.unit} · ${effectivePrice.toFixed(2)} ₼)`,
+        });
+        return [
+          ...prev,
+          {
+            product,
+            quantity: initialQty,
+            ...(priceOverride !== undefined ? { unitPriceOverride: priceOverride } : {}),
+          },
+        ];
+      });
+      setSaleError(null);
+    },
+    []
+  );
+
   const parsedCashReceived = useMemo(() => {
     if (paymentMethod !== 'cash' || !cashReceivedInput.trim()) return undefined;
-    const val = Number(cashReceivedInput);
+    const val = parseLocaleNumber(cashReceivedInput);
     if (Number.isNaN(val) || val < 0) return undefined;
     return Math.round(val * 100) / 100;
   }, [paymentMethod, cashReceivedInput]);
@@ -458,18 +613,30 @@ export function SaleModal({
     setManualCode('');
   };
 
-  const updateCartQty = (productId: string, nextQtyRaw: number) => {
+  const updateCartQty = (productId: string, nextQtyRaw: number, clearDraft = true) => {
+    if (Number.isNaN(nextQtyRaw) || nextQtyRaw <= 0) return;
+    if (clearDraft) {
+      setQtyDrafts((prev) => {
+        if (!(productId in prev)) return prev;
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+    }
     setCart((prev) =>
       prev.map((item) => {
         if (item.product.id !== productId) return item;
-        if (Number.isNaN(nextQtyRaw) || nextQtyRaw <= 0) {
-          return item;
+        const rounded = Math.max(0.01, Math.round(nextQtyRaw * 100) / 100);
+        const clamped = Math.min(item.product.quantity, rounded);
+        if (rounded > item.product.quantity) {
+          setSaleError(
+            `"${item.product.name}" üçün maksimum mövcud stok (${item.product.quantity} ${item.product.unit}) keçilə bilməz.`
+          );
+        } else {
+          setSaleError(null);
         }
-        const clamped = Math.min(
-          item.product.quantity,
-          Math.max(0.01, Math.round(nextQtyRaw * 100) / 100)
-        );
-        const gross = Math.round(clamped * item.product.salePrice * 100) / 100;
+        const unitPrice = getCartItemUnitPrice(item);
+        const gross = Math.round(clamped * unitPrice * 100) / 100;
         const clampedDiscount =
           typeof item.discountPercent === 'number' && item.discountPercent > 0
             ? Math.min(gross, Math.round(gross * item.discountPercent) / 100)
@@ -483,7 +650,35 @@ export function SaleModal({
         };
       })
     );
-    setSaleError(null);
+  };
+
+  const handleQtyInputChange = (item: CheckoutCartItem, rawValue: string) => {
+    const cleaned = rawValue.replace(/[^\d.,]/g, '');
+    const parsed = parseLocaleNumber(cleaned);
+
+    if (!Number.isNaN(parsed) && parsed > item.product.quantity) {
+      const maxQty = Math.round(item.product.quantity * 100) / 100;
+      setQtyDrafts((prev) => ({ ...prev, [item.product.id]: String(maxQty) }));
+      updateCartQty(item.product.id, maxQty, false);
+      setSaleError(
+        `"${item.product.name}" üçün maksimum mövcud stok ${maxQty} ${item.product.unit}-dir.`
+      );
+      return;
+    }
+
+    setQtyDrafts((prev) => ({ ...prev, [item.product.id]: cleaned }));
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      updateCartQty(item.product.id, parsed, false);
+    }
+  };
+
+  const handleQtyInputBlur = (productId: string) => {
+    setQtyDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
   };
 
   const applyItemPercentDiscount = (productId: string, percent: number) => {
@@ -495,7 +690,8 @@ export function SaleModal({
       return;
     }
 
-    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const gross =
+      Math.round(targetItem.quantity * getCartItemUnitPrice(targetItem) * 100) / 100;
     const clampedPct = Math.min(100, Math.max(0, Math.round(percent * 100) / 100));
     const applied = Math.min(gross, Math.round(gross * clampedPct) / 100);
 
@@ -521,14 +717,15 @@ export function SaleModal({
   const applyItemDiscount = (productId: string) => {
     const targetItem = cart.find((i) => i.product.id === productId);
     if (!targetItem) return;
-    const gross = Math.round(targetItem.quantity * targetItem.product.salePrice * 100) / 100;
+    const gross =
+      Math.round(targetItem.quantity * getCartItemUnitPrice(targetItem) * 100) / 100;
     const mode = itemDiscountModes[productId] ?? 'percent';
     const rawStr = (itemDiscountDrafts[productId] ?? '').trim();
     if (!rawStr) {
       clearItemDiscount(productId);
       return;
     }
-    const val = Number(rawStr);
+    const val = parseLocaleNumber(rawStr);
     if (Number.isNaN(val) || val < 0) {
       setSaleError('Endirim dəyəri 0 və ya müsbət rəqəm olmalıdır.');
       return;
@@ -593,6 +790,12 @@ export function SaleModal({
 
   const removeCartItem = (productId: string) => {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    setQtyDrafts((prev) => {
+      if (!(productId in prev)) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
     setItemDiscountDrafts((prev) => {
       if (!(productId in prev)) return prev;
       const next = { ...prev };
@@ -606,6 +809,16 @@ export function SaleModal({
       return next;
     });
     setSaleError(null);
+  };
+
+  const handleClearCart = () => {
+    setCart([]);
+    setQtyDrafts({});
+    setItemDiscountDrafts({});
+    setItemDiscountModes({});
+    setCashReceivedInput('');
+    setSaleError(null);
+    setScanFeedback(null);
   };
 
   const handleToggleAutoPrint = (checked: boolean) => {
@@ -698,7 +911,18 @@ export function SaleModal({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!completedReceipt ? (
+              <button
+                type="button"
+                onClick={() => setQuickAddOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 rounded-lg transition-colors cursor-pointer"
+                title="Məhsulu adı ilə axtarıb miqdar və qiyməti təyin edərək əlavə et"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Tez Əlavə</span>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onOpenReceiptSettings}
@@ -1024,7 +1248,7 @@ export function SaleModal({
                     {cart.length > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setCart([])}
+                        onClick={handleClearCart}
                         className="text-xs font-medium text-red-700 dark:text-red-400 hover:underline cursor-pointer"
                       >
                         Təmizlə
@@ -1034,20 +1258,30 @@ export function SaleModal({
                 </div>
 
                 {cart.length === 0 ? (
-                  <div className="bg-white dark:bg-slate-900/70 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-6 text-center space-y-1.5">
+                  <div className="bg-white dark:bg-slate-900/70 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-6 text-center space-y-2">
                     <ShoppingCart className="w-7 h-7 text-slate-300 dark:text-slate-600 mx-auto" />
                     <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
                       Səbət hələ boşdur
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Soldan kamera, qalereya və ya siyahı ilə 1 və ya bir neçə məhsul əlavə edin.
+                      Soldan kamera, qalereya və ya siyahı ilə məhsul oxudun, yaxud adı ilə əlavə edin.
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Tez Əlavə (Ad ilə)</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto">
                     {cart.map((item) => {
+                      const unitPrice = getCartItemUnitPrice(item);
+                      const hasCustomPrice = typeof item.unitPriceOverride === 'number';
                       const grossLineTotal =
-                        Math.round(item.quantity * item.product.salePrice * 100) / 100;
+                        Math.round(item.quantity * unitPrice * 100) / 100;
                       const appliedItemDiscount =
                         typeof item.discountAmount === 'number' && item.discountAmount > 0
                           ? Math.min(grossLineTotal, item.discountAmount)
@@ -1079,9 +1313,16 @@ export function SaleModal({
                                 <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
                                   {item.product.name}
                                 </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                                  {item.product.salePrice.toFixed(2)} ₼ / {item.product.unit} · Stok:{' '}
-                                  {item.product.quantity}
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums flex flex-wrap items-center gap-1.5">
+                                  <span>
+                                    {unitPrice.toFixed(2)} ₼ / {item.product.unit} · Stok:{' '}
+                                    {item.product.quantity}
+                                  </span>
+                                  {hasCustomPrice ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-sans font-semibold text-[10px]">
+                                      Xüsusi qiymət
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
                             </div>
@@ -1116,11 +1357,10 @@ export function SaleModal({
 
                             <div className="inline-flex items-center rounded-md border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 overflow-hidden">
                               <input
-                                type="number"
-                                min="0"
-                                max={discountModeForItem === 'percent' ? 100 : grossLineTotal}
-                                step="0.01"
+                                type="text"
+                                inputMode="decimal"
                                 value={draftValue}
+                                onFocus={(e) => e.currentTarget.select()}
                                 onChange={(e) =>
                                   setItemDiscountDrafts((prev) => ({
                                     ...prev,
@@ -1177,42 +1417,61 @@ export function SaleModal({
                           </div>
 
                           <div className="flex items-center justify-between gap-2">
-                            <div className="inline-flex items-center border border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-950">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQty(item.product.id, item.quantity - 1)
-                                }
-                                disabled={item.quantity <= 1}
-                                className="px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-                                aria-label="Azalt"
-                              >
-                                <Minus className="w-3.5 h-3.5" />
-                              </button>
-                              <input
-                                type="number"
-                                min="0.01"
-                                max={item.product.quantity}
-                                step="any"
-                                value={item.quantity}
-                                onChange={(e) =>
-                                  updateCartQty(item.product.id, Number(e.target.value))
-                                }
-                                className="w-14 text-center py-1 text-xs font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100 bg-transparent focus:outline-none"
-                                aria-label="Satış miqdarı"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQty(item.product.id, item.quantity + 1)
-                                }
-                                disabled={item.quantity >= item.product.quantity}
-                                className="px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-                                aria-label="Artır"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                            {(() => {
+                              const minStep =
+                                item.product.quantity < 1
+                                  ? Math.round(item.product.quantity * 100) / 100
+                                  : 1;
+                              return (
+                                <div className="inline-flex items-center border border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-950">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateCartQty(
+                                        item.product.id,
+                                        Math.max(
+                                          minStep,
+                                          Math.round((item.quantity - 1) * 100) / 100
+                                        ),
+                                        true
+                                      )
+                                    }
+                                    disabled={item.quantity <= minStep}
+                                    className="px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                                    aria-label="Azalt"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={qtyDrafts[item.product.id] ?? String(item.quantity)}
+                                    onFocus={(e) => e.currentTarget.select()}
+                                    onChange={(e) => handleQtyInputChange(item, e.target.value)}
+                                    onBlur={() => handleQtyInputBlur(item.product.id)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        e.currentTarget.blur();
+                                      }
+                                    }}
+                                    className="w-14 text-center py-1 text-xs font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100 bg-transparent focus:outline-none"
+                                    aria-label="Satış miqdarı"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateCartQty(item.product.id, item.quantity + 1, true)
+                                    }
+                                    disabled={item.quantity >= item.product.quantity}
+                                    className="px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                                    aria-label="Artır"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              );
+                            })()}
 
                             <div className="font-mono tabular-nums text-xs font-bold text-slate-900 dark:text-slate-100">
                               {appliedItemDiscount > 0 ? (
@@ -1291,10 +1550,10 @@ export function SaleModal({
                       </label>
                       <input
                         id="cash-received-input"
-                        type="number"
-                        min="0"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         value={cashReceivedInput}
+                        onFocus={(e) => e.currentTarget.select()}
                         onChange={(e) => {
                           setCashReceivedInput(e.target.value);
                           setSaleError(null);
@@ -1356,6 +1615,14 @@ export function SaleModal({
           </div>
         )}
       </div>
+
+      <QuickAddModal
+        isOpen={quickAddOpen}
+        products={products}
+        cartQuantities={cartQuantities}
+        onClose={() => setQuickAddOpen(false)}
+        onConfirmAdd={handleQuickAddConfirm}
+      />
     </div>
   );
 }

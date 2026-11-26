@@ -769,7 +769,13 @@ function MainApp() {
 
           const productName = String(sourceData.name || '');
           const unit = String(sourceData.unit || 'ədəd');
-          const unitPrice = Number(sourceData.salePrice ?? 0);
+          const catalogPrice = Number(sourceData.salePrice ?? 0);
+          const unitPrice =
+            typeof cartItem.unitPriceOverride === 'number' &&
+            !Number.isNaN(cartItem.unitPriceOverride) &&
+            cartItem.unitPriceOverride >= 0
+              ? Math.round(cartItem.unitPriceOverride * 100) / 100
+              : catalogPrice;
           const currentQty = Number(sourceData.quantity ?? 0);
           const sellQty = Math.round(cartItem.quantity * 100) / 100;
 
@@ -983,7 +989,13 @@ function MainApp() {
             }
             const productName = String(data.name || '');
             const unit = String(data.unit || 'ədəd');
-            const unitPrice = Number(data.salePrice ?? 0);
+            const catalogPrice = Number(data.salePrice ?? 0);
+            const unitPrice =
+              typeof cartItem.unitPriceOverride === 'number' &&
+              !Number.isNaN(cartItem.unitPriceOverride) &&
+              cartItem.unitPriceOverride >= 0
+                ? Math.round(cartItem.unitPriceOverride * 100) / 100
+                : catalogPrice;
             const currentQty = Number(data.quantity ?? 0);
             const sellQty = Math.round(cartItem.quantity * 100) / 100;
 
@@ -1742,6 +1754,12 @@ function MainApp() {
         }
         setDeleteTargetAuthUser(null);
       }
+    } catch (error) {
+      showNotice(
+        error instanceof Error
+          ? error.message
+          : 'Silinmə zamanı xəta baş verdi. Yenidən cəhd edin.'
+      );
     } finally {
       setDeleting(false);
     }

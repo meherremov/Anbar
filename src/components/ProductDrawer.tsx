@@ -20,6 +20,7 @@ import {
 } from '../types/inventory';
 import {
   generateInternalBarcode,
+  parseLocaleNumber,
   validateAndSanitizeProduct,
   type ValidatedProductPayload,
 } from '../utils/barcodeDecoder';
@@ -157,6 +158,16 @@ export function ProductDrawer({
     }
   }, [isOpen, scannedBarcodeOverride, onConsumeScannedOverride]);
 
+  const duplicateProduct = useMemo(() => {
+    const trimmed = form.barcode.trim().toLowerCase();
+    if (!trimmed) return null;
+    return (
+      existingProducts.find(
+        (p) => p.barcode.trim().toLowerCase() === trimmed && p.id !== product?.id
+      ) || null
+    );
+  }, [existingProducts, form.barcode, product?.id]);
+
   // Automatic cloud save when editing an existing product
   useEffect(() => {
     if (!isOpen || mode !== 'edit' || !product) return;
@@ -171,6 +182,12 @@ export function ProductDrawer({
       return;
     }
 
+    setAutoSaveState('idle');
+
+    if (duplicateProduct) {
+      return;
+    }
+
     const validation = validateAndSanitizeProduct(form);
     if (!validation.ok) {
       return;
@@ -182,23 +199,18 @@ export function ProductDrawer({
         await onUpdate(product.id, validation.data);
         lastSavedSerializedRef.current = currentSerialized;
         setAutoSaveState('saved');
-      } catch {
+      } catch (err) {
         setAutoSaveState('idle');
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Avtomatik yadda saxlama zamanı xəta baş verdi.'
+        );
       }
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [form, isOpen, mode, product, onUpdate]);
-
-  const duplicateProduct = useMemo(() => {
-    const trimmed = form.barcode.trim().toLowerCase();
-    if (!trimmed) return null;
-    return (
-      existingProducts.find(
-        (p) => p.barcode.trim().toLowerCase() === trimmed && p.id !== product?.id
-      ) || null
-    );
-  }, [existingProducts, form.barcode, product?.id]);
+  }, [form, isOpen, mode, product, duplicateProduct, onUpdate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -249,8 +261,9 @@ export function ProductDrawer({
   };
 
   const adjustQty = (delta: number) => {
-    const current = Number(form.quantity) || 0;
-    const next = Math.max(0, current + delta);
+    const parsed = parseLocaleNumber(form.quantity);
+    const current = Number.isNaN(parsed) ? 0 : parsed;
+    const next = Math.max(0, Math.round((current + delta) * 100) / 100);
     setForm((prev) => ({ ...prev, quantity: String(next) }));
   };
 
@@ -572,11 +585,11 @@ export function ProductDrawer({
                 </button>
                 <input
                   id="product-qty"
-                  type="number"
-                  min={0}
-                  step="any"
+                  type="text"
+                  inputMode="decimal"
                   required
                   value={form.quantity}
+                  onFocus={(e) => e.currentTarget.select()}
                   onChange={(e) => setForm((prev) => ({ ...prev, quantity: e.target.value }))}
                   className="w-full text-center py-2 text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100 bg-transparent focus:outline-none"
                 />
@@ -615,9 +628,8 @@ export function ProductDrawer({
               </label>
               <input
                 id="product-min-stock"
-                type="number"
-                min={0}
-                step="1"
+                type="text"
+                inputMode="decimal"
                 value={form.minStock}
                 onChange={(e) => setForm((prev) => ({ ...prev, minStock: e.target.value }))}
                 className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
@@ -633,9 +645,8 @@ export function ProductDrawer({
               </label>
               <input
                 id="product-purchase-price"
-                type="number"
-                min={0}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={form.purchasePrice}
                 onChange={(e) => setForm((prev) => ({ ...prev, purchasePrice: e.target.value }))}
                 placeholder="0.00"
@@ -649,9 +660,8 @@ export function ProductDrawer({
               </label>
               <input
                 id="product-sale-price"
-                type="number"
-                min={0}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 required
                 value={form.salePrice}
                 onChange={(e) => setForm((prev) => ({ ...prev, salePrice: e.target.value }))}

@@ -18,6 +18,7 @@ import {
   type SaleRecord,
   type StationeryIconId,
 } from '../types/inventory';
+import { parseLocaleNumber } from '../utils/barcodeDecoder';
 import { ProductThumb } from './ProductThumb';
 
 interface ReturnSaleModalProps {
@@ -146,9 +147,10 @@ export function ReturnSaleModal({
 
   const maxReturnQty = selectedSale ? getNetSaleQuantity(selectedSale) : 0;
   const maxRefundAmount = selectedSale ? getNetSaleAmount(selectedSale) : 0;
+  const minReturnQtyStep = maxReturnQty > 0 && maxReturnQty < 1 ? maxReturnQty : 1;
 
   const parsedReturnQty = useMemo(() => {
-    const val = Number(returnQtyInput);
+    const val = parseLocaleNumber(returnQtyInput);
     if (Number.isNaN(val) || val <= 0) return 0;
     return Math.min(maxReturnQty, Math.round(val * 100) / 100);
   }, [returnQtyInput, maxReturnQty]);
@@ -432,10 +434,15 @@ export function ReturnSaleModal({
                         type="button"
                         onClick={() =>
                           setReturnQtyInput(
-                            String(Math.max(1, Math.round((parsedReturnQty - 1) * 100) / 100))
+                            String(
+                              Math.max(
+                                minReturnQtyStep,
+                                Math.round((parsedReturnQty - 1) * 100) / 100
+                              )
+                            )
                           )
                         }
-                        disabled={parsedReturnQty <= 1}
+                        disabled={parsedReturnQty <= minReturnQtyStep}
                         className="px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
                         aria-label="Azalt"
                       >
@@ -443,12 +450,23 @@ export function ReturnSaleModal({
                       </button>
                       <input
                         id="return-qty-input"
-                        type="number"
-                        min="0.01"
-                        max={maxReturnQty}
-                        step="any"
+                        type="text"
+                        inputMode="decimal"
                         value={returnQtyInput}
+                        onFocus={(e) => e.currentTarget.select()}
                         onChange={(e) => setReturnQtyInput(e.target.value)}
+                        onBlur={() => {
+                          const parsed = parseLocaleNumber(returnQtyInput);
+                          if (Number.isNaN(parsed) || parsed <= 0) {
+                            setReturnQtyInput(String(minReturnQtyStep));
+                          } else {
+                            const clamped = Math.min(
+                              maxReturnQty,
+                              Math.max(0.01, Math.round(parsed * 100) / 100)
+                            );
+                            setReturnQtyInput(String(clamped));
+                          }
+                        }}
                         className="w-20 text-center py-2 text-sm font-mono tabular-nums font-bold text-slate-900 dark:text-white bg-transparent focus:outline-none"
                       />
                       <button

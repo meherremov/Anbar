@@ -146,6 +146,35 @@ function formatLiveTime(date: Date): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function getDateKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function LiveClockBadge() {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      <div className="hidden md:flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+        <Calendar className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+        <span>{formatLiveDate(now)}</span>
+      </div>
+
+      <div className="hidden sm:flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+        <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+        <span>{formatLiveTime(now)}</span>
+      </div>
+    </>
+  );
+}
+
 function getRecordTimestampMs(
   ts: Product['updatedAt'] | SaleRecord['soldAt'],
   docId: string
@@ -213,18 +242,19 @@ export function InventoryDashboard({
   const [profileMenuOpen, setProfileMenuOpen] = useState<boolean>(false);
   const [newCategoryInput, setNewCategoryInput] = useState<string>('');
   const [addingCategory, setAddingCategory] = useState<boolean>(false);
-  const [now, setNow] = useState<Date>(() => new Date());
+  const [todayDateKey, setTodayDateKey] = useState<string>(() => getDateKey(new Date()));
 
   const shouldReduceMotion = useReducedMotion();
   const lastExternalSearchSeqRef = useRef<number>(externalSearch?.seq ?? 0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const profileDropdownRef = useRef<HTMLDivElement | null>(null);
 
-  // Live clock ticking every second
+  // Update date key only when midnight rolls over (avoids re-rendering dashboard every second)
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setNow(new Date());
-    }, 1000);
+      const nextKey = getDateKey(new Date());
+      setTodayDateKey((prev) => (prev === nextKey ? prev : nextKey));
+    }, 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -304,10 +334,11 @@ export function InventoryDashboard({
     }
 
     let todaySalesRevenue = 0;
+    const currentDate = new Date();
     const startOfToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate()
     ).getTime();
     for (const s of sales) {
       const ms = getRecordTimestampMs(s.soldAt, s.id);
@@ -323,7 +354,7 @@ export function InventoryDashboard({
       lowOrOutCount,
       todaySalesRevenue,
     };
-  }, [products, sales, now]);
+  }, [products, sales, todayDateKey]);
 
   const latestSale = useMemo(() => {
     if (sales.length === 0) return null;
@@ -821,15 +852,7 @@ export function InventoryDashboard({
               </span>
             </button>
 
-            <div className="hidden md:flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-              <Calendar className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-              <span>{formatLiveDate(now)}</span>
-            </div>
-
-            <div className="hidden sm:flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
-              <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-              <span>{formatLiveTime(now)}</span>
-            </div>
+            <LiveClockBadge />
 
             <div className="relative" ref={profileDropdownRef}>
               <button

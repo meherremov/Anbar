@@ -230,6 +230,12 @@ export interface ValidatedProductPayload {
   icon: StationeryIconId;
 }
 
+export function parseLocaleNumber(raw: string): number {
+  const normalized = raw.trim().replace(',', '.');
+  if (!normalized) return Number.NaN;
+  return Number(normalized);
+}
+
 export function validateAndSanitizeProduct(
   values: ProductFormValues
 ): { ok: true; data: ValidatedProductPayload } | { ok: false; error: string } {
@@ -259,12 +265,12 @@ export function validateAndSanitizeProduct(
 
   const unit = values.unit.trim().slice(0, FIELD_LIMITS.UNIT_MAX) || 'ədəd';
 
-  const quantity = Number(values.quantity);
+  const quantity = parseLocaleNumber(values.quantity);
   if (Number.isNaN(quantity) || quantity < 0 || quantity > FIELD_LIMITS.NUMERIC_MAX) {
     return { ok: false, error: 'Stok miqdarı 0 və ya müsbət rəqəm olmalıdır.' };
   }
 
-  const salePrice = Number(values.salePrice);
+  const salePrice = parseLocaleNumber(values.salePrice);
   if (
     values.salePrice.trim() === '' ||
     Number.isNaN(salePrice) ||
@@ -295,7 +301,7 @@ export function validateAndSanitizeProduct(
   }
 
   if (values.purchasePrice.trim() !== '') {
-    const purchasePrice = Number(values.purchasePrice);
+    const purchasePrice = parseLocaleNumber(values.purchasePrice);
     if (
       Number.isNaN(purchasePrice) ||
       purchasePrice < 0 ||
@@ -307,7 +313,7 @@ export function validateAndSanitizeProduct(
   }
 
   if (values.minStock.trim() !== '') {
-    const minStock = Number(values.minStock);
+    const minStock = parseLocaleNumber(values.minStock);
     if (Number.isNaN(minStock) || minStock < 0 || minStock > FIELD_LIMITS.NUMERIC_MAX) {
       return { ok: false, error: 'Minimum stok həddi 0 və ya müsbət rəqəm olmalıdır.' };
     }
